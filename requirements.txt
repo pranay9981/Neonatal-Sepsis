@@ -1,0 +1,17 @@
+# Use this if you're on Python 3.11+ and cannot switch to 3.10
+torch>=2.9.0
+flwr==1.23.0
+pandas>=2.2.0,<2.4.0
+numpy>=2.2.0,<2.5.0
+pyarrow>=10.0.0
+scikit-learn>=1.6.0
+matplotlib>=3.7.0
+fastapi>=0.95.0
+uvicorn>=0.18.0
+tqdm
+psutil
+tenseal==0.3.16
+scipy>=1.10.0
+streamlit>=1.33.0
+shap>=0.44.0
+seaborn>=0.13.0
