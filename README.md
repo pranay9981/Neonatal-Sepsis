@@ -1,92 +1,282 @@
-1. Activate venv
+# Neonatal-Sepsis
 
-# windows powershell
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](#)  
+
+**Neonatal-Sepsis** — research codebase for modelling and evaluating time-series models for neonatal sepsis detection. Includes preprocessing utilities, local baselines (Transformer, GRU-D for missingness), federated learning simulation (server + clients), and a secure aggregation PoC. Use this repository to run local experiments, simulate federated training, and compare evaluation metrics (AUROC, AUPRC, precision/recall, etc.).
+
+---
+
+## Table of contents
+
+- [Key features](#key-features)  
+- [Repository structure](#repository-structure)  
+- [Requirements](#requirements)  
+- [Dataset & expected format (sample included)](#dataset--expected-format-sample-included)  
+- [Quickstart](#quickstart)  
+  - [1. Create & activate venv](#1-create--activate-venv)  
+  - [2. Preprocess raw data (parallel)](#2-preprocess-raw-data-parallel)  
+  - [3. (Optional) Pack into LMDB](#3-optional-pack-into-lmdb)  
+  - [4. Train local baseline (Transformer)](#4-train-local-baseline-transformer)  
+  - [5. Train GRU-D (missing-data aware)](#5-train-gru-d-missing-data-aware)  
+  - [Federated simulation](#federated-simulation)  
+  - [Evaluate & plot results](#evaluate--plot-results)  
+- [Evaluation & artifacts](#evaluation--artifacts)  
+- [Development notes & tips](#development-notes--tips)  
+- [Contributing](#contributing)  
+
+
+---
+
+## Key features
+
+- Preprocessing pipeline converting raw per-timestep `.psv` (pipe-separated) data to per-patient `.pt` objects.  
+- Local training: Transformer baseline and GRU-D (handles missingness).  
+- Simple hyperparameter search utilities.  
+- Federated learning simulation (server + multiple clients).  
+- Secure aggregation proof-of-concept (masking demonstration).  
+- Evaluation & plotting tools producing JSON summaries and comparative plots.
+
+---
+
+## Repository structure
+
+```
+Neonatal-Sepsis/
+├─ app.py
+├─ dashboard.py
+├─ README.md
+├─ requirements.txt
+├─ eval_results_federated.json
+├─ eval_results_local.json
+├─ model_comparison_plot.png
+├─ model_comparison_plot_prc.png
+├─ app_pages/                
+│  ├─ 1_00_📘_Project_Summary
+│  ├─ 1_03_📈_Predict
+│  └─ 1_04_🧪_Model_Metrics
+└─ src/
+   ├─ parallel_preprocess.py
+   ├─ lmdb_packer.py
+   ├─ model.py
+   ├─ model_grud.py
+   ├─ train_local.py
+   ├─ hyperparam_search.py
+   ├─ split_clients.py
+   ├─ fl_server.py
+   ├─ fl_client.py
+   ├─ secure_agg_poc.py
+   ├─ evaluate.py
+   └─ plot_results.py
+```
+
+> Note: If your repo uses a different static/templates path, either move your frontend files into `app_pages/` or update `app.py`/`dashboard.py` to point to the actual path.
+
+---
+
+## Requirements
+
+- Python 3.8+ (recommended 3.8–3.11)  
+- Create a virtual environment and install dependencies:
+
+```bash
+python -m venv .venv
+# activate
+# Windows PowerShell
 .venv\Scripts\Activate.ps1
-# linux/mac
+# Linux / macOS
 source .venv/bin/activate
 
+pip install -r requirements.txt
+```
 
-2. Preprocess raw .psv files into per-patient .pt (parallel).
+---
 
-python src/parallel_preprocess.py --raw_folder data/raw --out_folder data/processed/patients --seq_len 48 --nprocs 8
+## Dataset & expected format (sample included)
 
+**Format**: pipe (`|`) separated values (`.psv`). Each row represents a timepoint for an encounter (typically hourly). Preprocessing converts raw `.psv` per-encounter files into per-patient Torch `.pt` objects used by training/federation/evaluation.
 
-(Optional) pack into LMDB for faster IO (recommended for 40k files).
+**Important columns**:
+- Vital signs / labs:  
+  `HR, O2Sat, Temp, SBP, MAP, DBP, Resp, EtCO2, BaseExcess, HCO3, FiO2, pH, PaCO2, SaO2, AST, BUN, Alkalinephos, Calcium, Chloride, Creatinine, Bilirubin_direct, Glucose, Lactate, Magnesium, Phosphate, Potassium, Bilirubin_total, TroponinI, Hct, Hgb, PTT, WBC, Fibrinogen, Platelets`
+- Demographics / metadata: `Age, Gender, Unit1, Unit2, HospAdmTime, ICULOS`
+- Label: `SepsisLabel` — binary (0/1) per timepoint
 
-python src/lmdb_packer.py --in_folder data/processed/patients --out_folder data/processed/lmdb_shards --shard_size 4000
-# use LMDB index:
-cp data/processed/lmdb_shards/index_lmdb.pt data/processed/patients/index_with_labels_lmdb.pt
+**Notes**:
+- Missing values are `NaN`. Preprocessing builds masks and time-since-last-observation features (for GRU-D).
+- Keep the header row intact for each raw `.psv` file.
+- Place raw `.psv` files under `data/raw/` (or pass a different folder to the preprocessing script).
+- Example filename: `data/raw/sample_patient.psv`
 
+---
 
-3. Train local baseline (Transformer):
+## Quickstart
 
-python src/train_local.py --index data/processed/patients/index_with_labels.pt --epochs 10 --batch_size 64 --model transformer
+### 1. Create & activate venv
+(see Requirements above)
 
+### 2. Preprocess raw `.psv` files into per-patient `.pt` (parallel)
 
-4. Train GRU-D (missing-data aware):
+```bash
+python src/parallel_preprocess.py \
+  --raw_folder data/raw \
+  --out_folder data/processed/patients \
+  --seq_len 48 \
+  --nprocs 8
+```
 
-python src/train_local.py --index data/processed/patients/index_with_labels.pt --epochs 10 --batch_size 64 --model grud
+- `--seq_len`: number of timesteps (e.g., 48).  
+- `--nprocs`: number of parallel workers.
 
+### 3. (Optional) Pack into LMDB (recommended for large datasets)
 
-5. Hyperparameter quick grid (small):
+```bash
+python src/lmdb_packer.py \
+  --in_folder data/processed/patients \
+  --out_folder data/processed/lmdb_shards \
+  --shard_size 4000
+```
 
+### 4. Train local baseline (Transformer)
+
+```bash
+python src/train_local.py \
+  --index data/processed/patients/index_with_labels.pt \
+  --epochs 10 \
+  --batch_size 64 \
+  --model transformer
+```
+
+Training prints the run directory and best checkpoint path (e.g., `runs/.../checkpoints/model_best.pt`).
+
+### 5. Train GRU-D (missing-data aware)
+
+```bash
+python src/train_local.py \
+  --index data/processed/patients/index_with_labels.pt \
+  --epochs 10 \
+  --batch_size 64 \
+  --model grud
+```
+
+### 6. Hyperparameter quick grid
+
+```bash
 python src/hyperparam_search.py
+```
 
+---
 
-Federated simulation:
+## Federated simulation
 
-6. split clients (3–5)
+1. Split processed patients into client folders:
 
-python src/split_clients.py --processed_folder data/processed/patients --out_root data/processed/clients --n_clients 3
+```bash
+python src/split_clients.py \
+  --processed_folder data/processed/patients \
+  --out_root data/processed/clients \
+  --n_clients 3
+```
 
+2. Start the federated server (terminal 1):
 
-7. start server
+```bash
+python src/fl_server.py \
+  --model transformer \
+  --n_features 40 \
+  --seq_len 48 \
+  --min_clients 2 \
+  --rounds 5
+```
 
-# (Terminal 1)
-python src/fl_server.py --model transformer --n_features 40 --seq_len 48 --min_clients 2 --rounds 5
+3. Start each client (one terminal per client):
 
+```bash
+python src/fl_client.py \
+  --index data/processed/clients/client1/index.pt \
+  --model transformer \
+  --server_address 127.0.0.1:8080
+```
 
-8. start each client (terminal 2/3/4)
+Repeat for `client2` / `client3`.
 
-# (Terminal 2)
-python src/fl_client.py --index data/processed/clients/client1/index.pt --model transformer --server_address 127.0.0.1:8080
+### Secure aggregation PoC
 
-# (Terminal 3)
-python src/fl_client.py --index data/processed/clients/client2/index.pt --model transformer --server_address 127.0.0.1:8080
-
-# (Terminal 4)
-python src/fl_client.py --index data/processed/clients/client3/index.pt --model transformer --server_address 127.0.0.1:8080
-
-
-9. Secure aggregation PoC (run locally to show the masks cancel):
-
+```bash
 python src/secure_agg_poc.py
+```
+
+Runs a local proof-of-concept demonstrating additive mask cancellation so the server only observes aggregated updates.
+
+---
+
+## Evaluate & plot results
+
+1. Evaluate federated global checkpoint on a held-out client:
+
+```bash
+python src/evaluate.py \
+  --index data/processed/clients/client3/index.pt \
+  --ckpt server_out/global_best.pt \
+  --model transformer \
+  --n_features 40 \
+  --seq_len 48 \
+  --out_file eval_results_federated.json
+```
+
+2. Evaluate a local-only model:
+
+```bash
+python src/evaluate.py \
+  --index data/processed/clients/client3/index.pt \
+  --ckpt runs/<your_local_run>/checkpoints/model_best.pt \
+  --model transformer \
+  --n_features 40 \
+  --seq_len 48 \
+  --out_file eval_results_local.json
+```
+
+3. Generate comparison plot:
+
+```bash
+python src/plot_results.py \
+  --results eval_results_federated.json eval_results_local.json \
+  --out_file model_comparison_plot.png
+```
+
+---
+
+## Evaluation & artifacts
+
+Outputs produced by scripts:
+- JSON evaluation summaries (AUROC, AUPRC, precision/recall, thresholds).  
+- PNG comparison plots: `model_comparison_plot.png`, `model_comparison_plot_prc.png`.  
+- Checkpoints and training logs in `runs/` or `server_out/`.
+
+---
+
+## Development notes & tips
+
+- Use LMDB when I/O becomes the bottleneck.  
+- Pin dependency versions in `requirements.txt` for reproducibility.  
+- Save CLI args and random seeds for reproducible experiments.  
+- Federated simulation uses local networking — ensure matching ports and separate terminals or tmux panes.  
+- Inspect `src/parallel_preprocess.py` to see how `NaN` is handled and how masks/time deltas are created for GRU-D.
+
+---
+
+## Contributing
+
+Contributions welcome. Suggested improvements:
+- Add `data/README.md` describing dataset schema and a small mock `.psv` to help new users run the pipeline end-to-end.  
+- Add unit tests for preprocessing, loaders, and training.  
+- Add Dockerfile / docker-compose for reproducible local federation experiments.
+
+When opening PRs:
+1. Explain the change & rationale.  
+2. Include runnable examples or tests.  
+3. Keep changes small and focused.
+
+---
 
 
-10. Train the "Local-Only" Baseline Model
 
-In a terminal, run train_local.py to train a model only on client1's data.
-
-python src/train_local.py --index data/processed/clients/client1/index.pt --model transformer --run_name local_client1_model --epochs 10
-
-When it finishes, it will print a Run folder:. Copy the path to the model_best.pt file inside, which will look something like: runs\20251115T123000Z__local_client1_model\checkpoints\model_best.pt
-
-11. Evaluate the Federated Model
-
-Run evaluate.py to test your federated model against the client3 test set.
-
-python src/evaluate.py --index data/processed/clients/client3/index.pt --ckpt server_out/global_best.pt --model transformer --n_features 40 --seq_len 48 --out_file eval_results_federated.json
-
-12. Evaluate the Local-Only Model
-
-Run evaluate.py again, but this time using your local model.
-
-(Remember to paste the full path from step 4.1)
-
-python src/evaluate.py --index data/processed/clients/client3/index.pt --ckpt "runs\20251115T123000Z__local_client1_model\checkpoints\model_best.pt" --model transformer --n_features 40 --seq_len 48 --out_file eval_results_local.json
-
-13. Generate the Final Plot
-
-Run plot_results.py to combine your two evaluation files into one comparison graph.
-
-python src/plot_results.py --results eval_results_federated.json eval_results_local.json --out_file model_comparison_plot.png
