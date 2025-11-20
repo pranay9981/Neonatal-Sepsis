@@ -22,7 +22,8 @@
   - [Evaluate & plot results](#evaluate--plot-results)  
 - [Evaluation & artifacts](#evaluation--artifacts)  
 - [Development notes & tips](#development-notes--tips)  
-- [Contributing](#contributing)  
+- [Contributing](#contributing)
+- [Contact](#contact)    
 
 
 ---
@@ -278,5 +279,10 @@ When opening PRs:
 
 ---
 
+## Contact
 
+- Maintainer: [`pranay9981`](https://github.com/pranay9981)
+- Collaborators: [`NinadAmane`](https://github.com/NinadAmane), [`Rakshak05`](https://github.com/Rakshak05)  
+
+---
 
