@@ -40,6 +40,10 @@ import torch
 import flwr as fl
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
 # Try importing models from your repo
 try:
     from model import TimeSeriesTransformer
@@ -97,7 +101,7 @@ def arrays_to_state_dict_by_order(model: torch.nn.Module, arrays: List[np.ndarra
     keys = list(sd.keys())
     if len(arrays) != len(keys):
         # We'll still attempt partial mapping by min len
-        print(f"[WARN] arrays count {len(arrays)} != state_dict keys {len(keys)}. Attempting partial mapping.")
+        logger.warning("arrays count %d != state_dict keys %d. Attempting partial mapping.", len(arrays), len(keys))
     map_len = min(len(keys), len(arrays))
     new_sd = {}
     for k, arr in zip(keys[:map_len], arrays[:map_len]):
@@ -166,21 +170,21 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         try:
             nds = parameters_to_ndarrays(aggregated_parameters)
         except Exception as e:
-            print(f"[SERVER][WARN] Could not convert aggregated parameters to ndarrays: {e}")
+            logger.warning("Could not convert aggregated parameters to ndarrays: %s", e)
             return aggregated_parameters, aggregated_metrics
 
         # Build a model instance locally to map arrays -> state_dict
         try:
             model = build_model(self.model_name, n_features=self.n_features, seq_len=self.seq_len, device="cpu")
         except Exception as e:
-            print(f"[SERVER][WARN] Failed to build model for saving: {e}")
+            logger.warning("Failed to build model for saving: %s", e)
             return aggregated_parameters, aggregated_metrics
 
         # Map arrays -> state_dict
         try:
             sd = arrays_to_state_dict_by_order(model, nds)
         except Exception as e:
-            print(f"[SERVER][WARN] Failed to map arrays -> state_dict: {e}")
+            logger.warning("Failed to map arrays -> state_dict: %s", e)
             # still return aggregated parameters so training can continue
             return aggregated_parameters, aggregated_metrics
 
@@ -188,9 +192,9 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         ckpt_path = os.path.join(self.checkpoints_dir, f"global_round_{server_round}.pt")
         try:
             torch.save(sd, ckpt_path)
-            print(f"[SERVER] Saved PT: {ckpt_path}")
+            logger.info("Saved PT: %s", ckpt_path)
         except Exception as e:
-            print(f"[SERVER][WARN] Failed to save checkpoint for round {server_round}: {e}")
+            logger.warning("Failed to save checkpoint for round %d: %s", server_round, e)
 
         return aggregated_parameters, aggregated_metrics
 
@@ -249,13 +253,13 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
                         self.best_metric_value = val
                         self.best_round = server_round
                         self.best_path = dst
-                        print(f"[SERVER][ROUND {server_round}] New best model (metric={chosen_key}={val:.4f}). Saved -> {dst}")
+                        logger.info("[ROUND %d] New best model (%s=%.4f). Saved -> %s", server_round, chosen_key, val, dst)
                     else:
-                        print(f"[SERVER][WARN] Best candidate checkpoint missing for round {server_round}: {src}")
+                        logger.warning("Best candidate checkpoint missing for round %d: %s", server_round, src)
                 except Exception as e:
-                    print(f"[SERVER][WARN] Failed to copy best checkpoint: {e}")
+                    logger.warning("Failed to copy best checkpoint: %s", e)
         else:
-            print(f"[SERVER][ROUND {server_round}] No usable numeric metric found in {aggregated_metrics}; skipping best selection.")
+            logger.warning("[ROUND %d] No usable numeric metric found in %s; skipping best selection.", server_round, aggregated_metrics)
 
         return aggregated, aggregated_metrics
 
@@ -300,16 +304,16 @@ def main():
         args.min_evaluate_clients = args.min_clients
 
     server_address = f"{args.host}:{args.port}"
-    print(f"[SERVER] Starting Flower server on {server_address} for {args.rounds} rounds...")
-    print(f"[SERVER] Will require min_available_clients = {args.min_clients} to begin")
+    logger.info("Starting Flower server on %s for %d rounds...", server_address, args.rounds)
+    logger.info("Will require min_available_clients = %d to begin", args.min_clients)
 
     # Build initial parameters from local model so server doesn't need a client to provide them
     try:
         initial_parameters = build_initial_parameters_from_model(args.model, args.n_features, args.seq_len)
-        print("[SERVER] Built initial parameters from local untrained model.")
+        logger.info("Built initial parameters from local untrained model.")
     except Exception as e:
         initial_parameters = None
-        print(f"[SERVER][WARN] Failed to build initial parameters from model: {e}. Server will request from a client instead.")
+        logger.warning("Failed to build initial parameters from model: %s. Server will request from a client instead.", e)
 
     # Build a strategy instance
     # The 'initial_parameters' argument is passed to the strategy, NOT to start_server
@@ -343,7 +347,7 @@ def main():
             strategy=strategy,
         )
     except Exception as e:
-        print(f"[SERVER][ERROR] Failed to start server: {e}")
+        logger.error("Failed to start server: %s", e)
         raise
 
 

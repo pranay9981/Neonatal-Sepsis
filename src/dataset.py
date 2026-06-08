@@ -54,27 +54,17 @@ class PatientDataset(Dataset):
         if self.mode == 'transformer':
             return X, torch.tensor(y, dtype=torch.float32)
         elif self.mode == 'grud':
-            # create mask and deltas
             mask = (~torch.isnan(X)).float()
             X_filled = X.clone()
-            # forward/backward fill for imputations used by model (we keep X_filled for GRU-D)
-            # simple fill with 0 for NaNs (GRU-D handles mask)
             X_filled[torch.isnan(X_filled)] = 0.0
-            # compute deltas: time since last observation per feature
-            # we don't have timestamps here; assume uniform hourly spacing -> delta 1 where mask=1 else accumulate
+            # Deltas = time since last observation per feature.
+            # Assumes uniform hourly timestep spacing (ICULOS-derived index in preprocessing).
+            # At t=0 delta is 0; for each subsequent step, delta resets to 0 on observation
+            # and increments by 1 when the feature is missing.
             T, F = X.shape
-            deltas = torch.zeros_like(X_filled)
-            last_seen = torch.zeros(X_filled.size(0), F) if False else None
-            # simple per-step delta: 1 when observation present else increase
-            dt = torch.ones(T, F)
-            for t in range(T):
-                if t == 0:
-                    deltas[t] = torch.zeros(F)
-                else:
-                    deltas[t] = deltas[t-1] + 1.0
-                    deltas[t] = deltas[t] * (1.0 - mask[t]) + 0.0 * mask[t]
-            # reshape deltas to (T,F)
-            # Make shapes (B,T,F) at collate time; here return T x F
+            deltas = torch.zeros(T, F)
+            for t in range(1, T):
+                deltas[t] = (deltas[t - 1] + 1.0) * (1.0 - mask[t])
             return X_filled, mask, deltas, torch.tensor(y, dtype=torch.float32)
         else:
             raise ValueError("Unknown dataset mode: " + self.mode)

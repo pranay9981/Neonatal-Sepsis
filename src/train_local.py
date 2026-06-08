@@ -1,60 +1,55 @@
 # src/train_local.py
 """
-Training script updated for Windows-compatible dataloader workers.
-
-Key fixes:
-- collate_grud moved to module scope (picklable).
-- num_workers defaults to 0 on Windows to avoid spawn/pickle issues.
-- All previous features retained: transformer/grud, AMP, scheduler, run folders, logging.
+Local training script.
+Key improvements over original:
+- Uses patient-level stratified train/val split (no data leakage between patients).
+- Computes pos_weight from all labels, not a 2000-sample estimate.
+- Replaces print() with structured logging.
+- Uses absolute default paths anchored to project root.
 """
 
 import os
 import json
-import math
 import random
 import argparse
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset, random_split
 from tqdm import tqdm
-
 from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from dataset import PatientDataset
 from model import TimeSeriesTransformer
 from model_grud import GRUD
+from logging_config import get_logger
+
+logger = get_logger(__name__)
+
+_PROJECT_ROOT = Path(__file__).parent.parent
+
 
 # -------------------------
-# Module-level collate for GRU-D
+# Module-level collate for GRU-D (must be picklable for Windows multiprocessing)
 # -------------------------
 def collate_grud(batch):
-    """
-    Top-level collate function so it can be pickled on Windows.
-    Expects batch items: (X (T,F), mask (T,F), deltas (T,F), y)
-    Returns stacked tensors: X (B,T,F), mask (B,T,F), deltas (B,T,F), y (B,)
-    """
     Xs, masks, deltas, ys = zip(*batch)
-    X = torch.stack(Xs)
-    mask = torch.stack(masks)
-    delta = torch.stack(deltas)
-    y = torch.stack(ys)
-    return X, mask, delta, y
+    return torch.stack(Xs), torch.stack(masks), torch.stack(deltas), torch.stack(ys)
+
 
 # -------------------------
 # Utilities
 # -------------------------
-def get_num_workers(preferred: int = 4):
-    """
-    Return number of DataLoader workers. On Windows use 0 to avoid pickling problems
-    unless user explicitly sets environment or platform supports forkserver.
-    """
+def get_num_workers(preferred: int = 4) -> int:
     if os.name == "nt":
         return 0
     return max(0, preferred)
+
 
 def seed_everything(seed: int = 42):
     random.seed(seed)
@@ -62,6 +57,7 @@ def seed_everything(seed: int = 42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
 
 def safe_metrics(y_true, logits):
     y_true = np.array(y_true)
@@ -77,44 +73,66 @@ def safe_metrics(y_true, logits):
     except Exception:
         return 0.0, 0.0
 
+
 def build_model_from_sample(sample_X, model_name):
     if model_name == "transformer":
-        n_features = sample_X.shape[1]
-        seq_len = sample_X.shape[0]
-        return TimeSeriesTransformer(n_features=n_features, seq_len=seq_len)
+        return TimeSeriesTransformer(n_features=sample_X.shape[1], seq_len=sample_X.shape[0])
     elif model_name == "grud":
-        n_features = sample_X.shape[1]
-        return GRUD(n_features=n_features, hidden_size=128)
+        return GRUD(n_features=sample_X.shape[1], hidden_size=128)
     else:
         raise ValueError("Unknown model: " + model_name)
+
+
+def stratified_train_val_split(ds: PatientDataset, val_ratio: float = 0.2, seed: int = 42):
+    """
+    Patient-level stratified split using labels stored in the index file.
+    Falls back to random split if stratification is not possible.
+    """
+    labels_raw = ds.y_indexed if ds.y_indexed is not None else [float(ds[i][-1]) for i in range(len(ds))]
+    labels = [int(float(l)) for l in labels_raw]
+
+    n = len(ds)
+    n_val = max(1, int(val_ratio * n))
+    n_train = n - n_val
+
+    unique = set(labels)
+    if len(unique) < 2 or n_val < len(unique):
+        logger.warning("Cannot stratify (classes=%d, n_val=%d) — falling back to random split.", len(unique), n_val)
+        train_ds, val_ds = random_split(ds, [n_train, n_val])
+        return train_ds, val_ds, labels
+
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio, random_state=seed)
+    train_idx, val_idx = next(sss.split(range(n), labels))
+    return Subset(ds, list(train_idx)), Subset(ds, list(val_idx)), labels
+
 
 # -------------------------
 # Training
 # -------------------------
-def train(index_path: str,
-          model_name: str = "transformer",
-          epochs: int = 10,
-          batch_size: int = 64,
-          lr: float = 1e-4,
-          seed: int = 42,
-          run_name: str = "run",
-          device: str | None = None,
-          checkpoint_root: str = "runs",
-          preferred_workers: int = 4):
-
+def train(
+    index_path: str,
+    model_name: str = "transformer",
+    epochs: int = 10,
+    batch_size: int = 64,
+    lr: float = 1e-4,
+    seed: int = 42,
+    run_name: str = "run",
+    device: str | None = None,
+    checkpoint_root: str | None = None,
+    preferred_workers: int = 4,
+):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = torch.cuda.is_available()
 
-    # timezone-aware timestamp
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if checkpoint_root is None:
+        checkpoint_root = str(_PROJECT_ROOT / "runs")
 
-    # run folder
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_folder = os.path.join(checkpoint_root, f"{ts}__{run_name}")
     ckpt_dir = os.path.join(run_folder, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # save run info
     run_info = {
         "index_path": index_path,
         "model": model_name,
@@ -124,31 +142,26 @@ def train(index_path: str,
         "seed": seed,
         "device": device,
         "timestamp_utc": ts,
-        "preferred_workers": preferred_workers
+        "preferred_workers": preferred_workers,
     }
-    os.makedirs(run_folder, exist_ok=True)
     with open(os.path.join(run_folder, "run_info.json"), "w") as fh:
         json.dump(run_info, fh, indent=2)
 
-    # --- Dataset ---
-    ds = PatientDataset(index_path, mode="grud" if model_name == "grud" else "transformer")
+    # Dataset
+    mode = "grud" if model_name == "grud" else "transformer"
+    ds = PatientDataset(index_path, mode=mode)
     n = len(ds)
-
     if n < 2:
-        raise ValueError(f"Need at least 2 patients to train/validate, found {n}")
+        raise ValueError(f"Need at least 2 patients, found {n}")
 
-    n_train = int(0.8 * n)
-    n_val = n - n_train
-    if n_val == 0:
-        n_train = max(1, n_train - 1)
-        n_val = n - n_train
+    # Stratified split + full-dataset pos_weight
+    train_ds, val_ds, all_labels = stratified_train_val_split(ds, val_ratio=0.2, seed=seed)
+    pos = sum(all_labels)
+    neg = n - pos
+    logger.info("Dataset: %d patients | %d positive (%.1f%%) | %d negative", n, pos, 100 * pos / n, neg)
+    logger.info("Split: %d train | %d val", len(train_ds), len(val_ds))
 
-    train_ds, val_ds = random_split(ds, [n_train, n_val])
-
-    # determine num_workers
     num_workers = get_num_workers(preferred=preferred_workers)
-
-    # dataloaders
     if model_name == "transformer":
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=min(2, num_workers))
@@ -156,43 +169,27 @@ def train(index_path: str,
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_grud)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=min(2, num_workers), collate_fn=collate_grud)
 
-    # --- Model ---
-    if model_name == "transformer":
-        sample_X, _ = ds[0]
-    else:
-        sample_X, _, _, _ = ds[0]
+    # Model
+    sample = ds[0]
+    sample_X = sample[0]
     model = build_model_from_sample(sample_X, model_name).to(device)
 
-    # --- Class imbalance ---
-    ys = []
-    sample_n = min(n, 2000)
-    for i in range(sample_n):
-        try:
-            it = ds[i]
-            y = it[-1] if model_name == "grud" else it[1]
-            ys.append(float(y))
-        except Exception:
-            pass
-    pos = sum(ys)
-    neg = len(ys) - pos
-    pos_weight = torch.tensor([(neg / (pos + 1e-6)) if pos > 0 else 1.0], dtype=torch.float32).to(device)
+    pos_weight = torch.tensor(
+        [(neg / (pos + 1e-6)) if pos > 0 else 1.0],
+        dtype=torch.float32,
+    ).to(device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    # optimizer & scheduler
     opt = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", patience=2, factor=0.5)
-
-    # AMP scaler (compatible)
     scaler = torch.amp.GradScaler(enabled=use_amp)
 
-    # metrics logging
     metrics_csv = os.path.join(run_folder, "metrics.csv")
     with open(metrics_csv, "w") as fh:
         fh.write("epoch,train_loss,val_auc,val_ap,lr\n")
 
     best_auc = 0.0
 
-    # training loop
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0.0
@@ -222,18 +219,14 @@ def train(index_path: str,
 
         train_loss = running_loss / max(1, seen)
 
-        # validation
         model.eval()
-        val_logits = []
-        val_y = []
-
+        val_logits, val_y = [], []
         with torch.no_grad():
             for batch in val_loader:
                 if model_name == "transformer":
                     Xb, yb = batch
-                    Xb = Xb.to(device)
                     with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
-                        logits = model(Xb).cpu().numpy()
+                        logits = model(Xb.to(device)).cpu().numpy()
                     val_logits.extend(logits.tolist())
                     val_y.extend(yb.numpy().tolist())
                 else:
@@ -249,10 +242,12 @@ def train(index_path: str,
         scheduler.step(auc)
         new_lr = opt.param_groups[0]["lr"]
         if new_lr != old_lr:
-            print(f"[LR Scheduler] LR reduced: {old_lr} -> {new_lr}")
+            logger.info("LR reduced: %.2e -> %.2e", old_lr, new_lr)
 
-        # save checkpoint
-        torch.save({"model_state": model.state_dict(), "epoch": epoch, "auc": auc}, os.path.join(ckpt_dir, f"model_epoch{epoch}.pt"))
+        torch.save(
+            {"model_state": model.state_dict(), "epoch": epoch, "auc": auc},
+            os.path.join(ckpt_dir, f"model_epoch{epoch}.pt"),
+        )
         if auc > best_auc:
             best_auc = auc
             torch.save({"model_state": model.state_dict()}, os.path.join(ckpt_dir, "model_best.pt"))
@@ -260,10 +255,10 @@ def train(index_path: str,
         with open(metrics_csv, "a") as fh:
             fh.write(f"{epoch},{train_loss:.6f},{auc:.6f},{ap:.6f},{new_lr:.8f}\n")
 
-        print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_auc={auc:.4f} val_ap={ap:.4f}")
+        logger.info("Epoch %d/%d  train_loss=%.4f  val_auc=%.4f  val_ap=%.4f", epoch, epochs, train_loss, auc, ap)
 
-    print("Training complete. Best AUROC =", best_auc)
-    print("Run folder:", run_folder)
+    logger.info("Training complete. Best AUROC = %.4f", best_auc)
+    logger.info("Run folder: %s", run_folder)
 
 
 # -------------------------
@@ -279,7 +274,7 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--run_name", type=str, default="train")
     ap.add_argument("--device", type=str, default=None)
-    ap.add_argument("--workers", type=int, default=4, help="Preferred number of dataloader workers (0 on Windows)")
+    ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
 
     train(
@@ -291,6 +286,5 @@ if __name__ == "__main__":
         seed=args.seed,
         run_name=args.run_name,
         device=args.device,
-        checkpoint_root="runs",
-        preferred_workers=args.workers
+        preferred_workers=args.workers,
     )

@@ -97,14 +97,13 @@ class GRUD(nn.Module):
             delta_scalar = torch.zeros((B, T, 1), device=device)
         else:
             if deltas.dim() == 3 and deltas.shape[2] == F:
-                # average per-timestep across features (robust simple choice)
-                delta_scalar = deltas.mean(dim=2, keepdim=True)  # (B, T, 1)
+                # learned projection: (B, T, F) -> (B, T, 1)
+                delta_scalar = self.delta_proj(deltas)
             elif deltas.dim() == 3 and deltas.shape[2] == 1:
-                delta_scalar = deltas  # already (B,T,1)
+                delta_scalar = deltas
             elif deltas.dim() == 2:
-                delta_scalar = deltas.unsqueeze(-1)  # (B,T,1)
+                delta_scalar = deltas.unsqueeze(-1)
             else:
-                # fallback: zeros
                 delta_scalar = torch.zeros((B, T, 1), device=device)
 
         # initial hidden state

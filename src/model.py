@@ -24,10 +24,13 @@ class TimeSeriesTransformer(nn.Module):
     def forward(self, x):
         # x: (B, T, F)
         x = self.input_proj(x)
-        if x.size(1) <= self.pos_emb.size(1):
-            x = x + self.pos_emb[:, :x.size(1), :]
+        T = x.size(1)
+        P = self.pos_emb.size(1)
+        if T <= P:
+            x = x + self.pos_emb[:, :T, :]
         else:
-            x = x + self.pos_emb[:, :x.size(1), :]
+            # sequence longer than trained positional embedding: add to first P steps only
+            x = torch.cat([x[:, :P, :] + self.pos_emb, x[:, P:, :]], dim=1)
         x = self.transformer(x)
         x = x.mean(dim=1)  # pooled representation
         out = self.classifier(x)  # logits

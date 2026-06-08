@@ -13,8 +13,13 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import json
+from sklearn.metrics import roc_auc_score, average_precision_score
+from scipy.special import expit
 
 from dataset import PatientDataset
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Try importing models (must exist in repo)
 try:
@@ -243,12 +248,11 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
             else:
                 n_features_inf = arr.shape[-1]
                 seq_len_inf = arr.shape[0] if arr.ndim >= 2 else 48
-            
             if n_features is None:
                 n_features = n_features_inf
             if seq_len is None:
                 seq_len = seq_len_inf
-            print(f"[EVAL] Inferred n_features={n_features}, seq_len={seq_len} from dataset.")
+            logger.info("Inferred n_features=%d, seq_len=%d from dataset.", n_features, seq_len)
         except Exception:
             if n_features is None or seq_len is None:
                 raise ValueError("Could not infer n_features/seq_len. Please provide --n_features and --seq_len arguments.")
@@ -271,7 +275,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
         
         try:
             model.load_state_dict(sd)
-            print(f"[EVAL] Loaded .pt checkpoint: {ckpt_path}")
+            logger.info("Loaded .pt checkpoint: %s", ckpt_path)
         except Exception as e:
             raise RuntimeError(f"Failed loading .pt state_dict: {e}")
 
@@ -282,8 +286,8 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
         try:
             sd, pt_path = npz_to_pt_and_state_dict(ckpt_path, model)
             model.load_state_dict(sd)
-            print(f"[EVAL] Converted NPZ -> PT: saved {pt_path}")
-            ckpt_path = pt_path  # use converted .pt for reporting
+            logger.info("Converted NPZ -> PT: saved %s", pt_path)
+            ckpt_path = pt_path
         except Exception as e:
             raise RuntimeError(f"Failed to convert NPZ to PT: {e}")
     else:
@@ -297,8 +301,6 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
 
     ys = []
     preds = []
-    import numpy as _np
-    from sklearn.metrics import roc_auc_score, average_precision_score
 
     with torch.no_grad():
         for batch in loader:
@@ -311,28 +313,16 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
                 Xb, Mb, Db = Xb.to(device).float(), Mb.to(device).float(), Db.to(device).float()
                 logits = model(Xb, Mb, Db)
 
-            if isinstance(logits, torch.Tensor):
-                arr = logits.detach().cpu().numpy().reshape(-1)
-            else:
-                arr = _np.asarray(logits).reshape(-1)
-
-            yb = _np.asarray(yb).reshape(-1)
-
-            ys.append(yb)
+            arr = logits.detach().cpu().numpy().reshape(-1) if isinstance(logits, torch.Tensor) else np.asarray(logits).reshape(-1)
+            ys.append(np.asarray(yb).reshape(-1))
             preds.append(arr)
 
     if len(ys) == 0:
         raise RuntimeError("No evaluation samples found in dataset.")
 
-    ys = _np.concatenate(ys)
-    preds = _np.concatenate(preds)
-
-    # convert logits to probabilities
-    try:
-        from scipy.special import expit
-        probs = expit(preds)
-    except Exception:
-        probs = 1.0 / (1.0 + _np.exp(-preds))
+    ys = np.concatenate(ys)
+    preds = np.concatenate(preds)
+    probs = expit(preds)
 
     auc = None
     ap = None
@@ -340,9 +330,9 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
         auc = float(roc_auc_score(ys, probs))
         ap = float(average_precision_score(ys, probs))
     else:
-        print("[EVAL] Warning: single-class labels; cannot compute AUC/AP")
+        logger.warning("Single-class labels in dataset; cannot compute AUC/AP.")
 
-    print(f"[EVAL] {os.path.basename(ckpt_path)} -> samples={len(ys)} AUROC={auc} AUPRC={ap}")
+    logger.info("%s -> samples=%d  AUROC=%s  AUPRC=%s", os.path.basename(ckpt_path), len(ys), auc, ap)
     
     # --- START OF MODIFICATION ---
     # Create results dictionary and save to JSON if out_file is provided
@@ -360,9 +350,9 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
         try:
             with open(out_file, 'w') as f:
                 json.dump(results_dict, f, indent=2)
-            print(f"[EVAL] Saved detailed results to: {out_file}")
+            logger.info("Saved detailed results to: %s", out_file)
         except Exception as e:
-            print(f"[EVAL][WARN] Failed to save results to {out_file}: {e}")
+            logger.warning("Failed to save results to %s: %s", out_file, e)
             
     return results_dict
     # --- END OF MODIFICATION ---
@@ -391,7 +381,7 @@ def evaluate(index_path, ckpt_input, model_name, device="cpu", n_features=None, 
                 r = evaluate_single_ckpt(index_path, str(c), model_name, device=device, n_features=n_features, seq_len=seq_len, out_file=None)
                 results.append(r)
             except Exception as e:
-                print(f"[EVAL][WARN] Skipping {c}: {e}")
+                logger.warning("Skipping %s: %s", c, e)
     else:
         # single file, pass the out_file argument
         results.append(evaluate_single_ckpt(index_path, str(ckpt_path), model_name, device=device, n_features=n_features, seq_len=seq_len, out_file=out_file))
@@ -410,13 +400,13 @@ def evaluate(index_path, ckpt_input, model_name, device="cpu", n_features=None, 
             if score is not None:
                 if best is None or score > best["_score"]:
                     best = r
-        print("\n[EVAL] Summary of evaluated checkpoints:")
+        logger.info("Summary of evaluated checkpoints:")
         for r in results:
-            print(f"  {os.path.basename(r['ckpt']):40s}  AUROC={r['auroc']}  AUPRC={r['auprc']}  samples={r['n']}")
+            logger.info("  %-40s  AUROC=%s  AUPRC=%s  samples=%s", os.path.basename(r['ckpt']), r['auroc'], r['auprc'], r['n'])
         if best is not None:
-            print(f"\n[EVAL] Best checkpoint: {os.path.basename(best['ckpt'])}  score={best['_score']}")
+            logger.info("Best checkpoint: %s  score=%s", os.path.basename(best['ckpt']), best['_score'])
         else:
-            print("\n[EVAL] No checkpoint reported numeric AUROC/AUPRC; cannot select best.")
+            logger.warning("No checkpoint reported numeric AUROC/AUPRC; cannot select best.")
         return best
     else:
         return results[0]

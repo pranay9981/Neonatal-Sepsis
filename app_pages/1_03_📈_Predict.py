@@ -16,14 +16,24 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 try:
     from model import TimeSeriesTransformer
+    from config import (
+        MODEL_PATH as _MODEL_PATH,
+        EVAL_FEDERATED_JSON as _EVAL_FED,
+        SCALER_PATH as _SCALER_PATH,
+        N_FEATURES,
+        SEQ_LEN,
+    )
 except Exception:
     TimeSeriesTransformer = None
+    _MODEL_PATH = "server_out/global_best.pt"
+    _EVAL_FED = "eval_results_federated.json"
+    _SCALER_PATH = "data/processed/patients/scaler.json"
+    N_FEATURES = 40
+    SEQ_LEN = 48
 
-# ---------- Constants ----------
-MODEL_PATH = Path("server_out/global_best.pt")
-N_FEATURES = 40
-SEQ_LEN = 48
-EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
+MODEL_PATH = Path(_MODEL_PATH)
+EVAL_FEDERATED_JSON = Path(_EVAL_FED)
+SCALER_PATH = Path(_SCALER_PATH)
 
 FEATURE_NAMES = [
     "HR","O2Sat","Temp","SBP","MAP","DBP","Resp","EtCO2",
@@ -113,7 +123,23 @@ def load_eval_data(path: str):
     except Exception:
         return None
 
-def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN, n_features: int = N_FEATURES):
+@st.cache_data
+def load_scaler(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        with open(p, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _apply_scaler(arr: np.ndarray, scaler: dict) -> np.ndarray:
+    mean = np.array(scaler["mean"], dtype=np.float32)
+    std = np.array(scaler["std"], dtype=np.float32)
+    return (arr - mean) / std
+
+def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN, n_features: int = N_FEATURES, scaler=None):
     messages = []
     try:
         df_numeric = df.apply(pd.to_numeric, errors="coerce")
@@ -140,7 +166,10 @@ def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN, n_features: i
     else:
         df_proc = df_numeric
 
-    tensor = torch.tensor(df_proc.to_numpy(dtype=np.float32)).unsqueeze(0)
+    data_np = df_proc.to_numpy(dtype=np.float32)
+    if scaler is not None:
+        data_np = _apply_scaler(data_np, scaler)
+    tensor = torch.tensor(data_np).unsqueeze(0)
     return tensor, messages
 
 def safe_predict(model, tensor):
@@ -248,6 +277,9 @@ class PredictPage:
 
         model, model_err = load_model(str(MODEL_PATH))
         eval_data = load_eval_data(str(EVAL_FEDERATED_JSON))
+        scaler = load_scaler(str(SCALER_PATH))
+        if scaler is None:
+            st.info("Feature scaler not found — run preprocessing first to improve prediction accuracy.")
 
         if model is None:
             st.warning(f"Model not available: {model_err or 'Model file missing.'}")
@@ -373,7 +405,7 @@ class PredictPage:
                 df_preview = st.session_state.df_input_temp
             st.dataframe(df_preview.head())
 
-            tensor, messages = preprocess_dataframe(df_preview, SEQ_LEN, N_FEATURES)
+            tensor, messages = preprocess_dataframe(df_preview, SEQ_LEN, N_FEATURES, scaler=scaler)
             for m in messages:
                 st.info(m)
 

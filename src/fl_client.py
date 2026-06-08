@@ -38,6 +38,9 @@ except Exception:
     GRUD = None
 
 from sklearn.metrics import roc_auc_score, average_precision_score
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # -----------------------
 # Utils: convert state_dict <-> list of numpy arrays (ordered)
@@ -125,7 +128,7 @@ class FlowerClient(fl.client.NumPyClient):
         self.train_loader = DataLoader(ds, batch_size=self.batch_size, shuffle=True, num_workers=0)
         self.eval_loader = DataLoader(ds, batch_size=self.batch_size, shuffle=False, num_workers=0)
 
-        print(f"[CLIENT] Inferred n_features={self.n_features}, seq_len={self.seq_len} from dataset.")
+        logger.info("Inferred n_features=%d, seq_len=%d from dataset.", self.n_features, self.seq_len)
 
     # get_parameters: return list of numpy arrays
     def get_parameters(self) -> List[np.ndarray]:
@@ -145,7 +148,7 @@ class FlowerClient(fl.client.NumPyClient):
             try:
                 self.set_parameters(parameters)
             except Exception as e:
-                print(f"[CLIENT][WARN] Could not set incoming parameters: {e}")
+                logger.warning("Could not set incoming parameters: %s", e)
 
         self.model.train()
         device = torch.device(self.device)
@@ -177,7 +180,7 @@ class FlowerClient(fl.client.NumPyClient):
 
             if n_samples > 0:
                 ep_loss = running_loss / n_samples
-                print(f"[CLIENT][TRAIN] epoch {epoch+1}/{self.local_epochs} loss={ep_loss:.4f}")
+                logger.info("[TRAIN] epoch %d/%d  loss=%.4f", epoch + 1, self.local_epochs, ep_loss)
 
         # return updated parameters
         out_params = state_dict_to_ndarrays(self.model.state_dict())
@@ -194,7 +197,7 @@ class FlowerClient(fl.client.NumPyClient):
             try:
                 self.set_parameters(parameters)
             except Exception as e:
-                print(f"[CLIENT][WARN] Could not set parameters in evaluate: {e}")
+                logger.warning("Could not set parameters in evaluate: %s", e)
         
         metrics = self.evaluate_local()
         n = len(self.eval_loader.dataset)
@@ -244,7 +247,7 @@ class FlowerClient(fl.client.NumPyClient):
                 n_samples += len(yb_arr)
                 
         if n_samples == 0:
-            print("[CLIENT][WARN] No samples found in evaluate_local. Returning empty metrics.")
+            logger.warning("No samples found in evaluate_local. Returning empty metrics.")
             return {"loss": float("nan"), "auroc": float("nan"), "auprc": float("nan")}
             
         ys = np.concatenate(ys)
@@ -281,11 +284,11 @@ def start_client(index_path: str, server_address: str, model_name: str, device: 
     while True:
         attempt += 1
         try:
-            print(f"[CLIENT] Connecting to {server_address} (attempt {attempt}) ...")
+            logger.info("Connecting to %s (attempt %d)...", server_address, attempt)
             fl.client.start_client(server_address=server_address, client=client_obj)
             break
         except Exception as e:
-            print(f"[CLIENT][WARN] start_client attempt {attempt} failed: {e}")
+            logger.warning("start_client attempt %d failed: %s", attempt, e)
             if attempt >= max_retries:
                 raise
             time.sleep(retry_delay)
