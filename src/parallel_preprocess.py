@@ -151,6 +151,8 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
         delta_seq = np.vstack([np.zeros((pad_len, F), dtype=np.float32), delta_np])
 
     y = 0
+    y_seq_raw = None  # per-timestep SepsisLabel (before resampling window)
+    onset_hour = None
     for cand in LABEL_CANDIDATES:
         for col in df.columns:
             if col.lower() == cand.lower():
@@ -161,6 +163,26 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
                         y = int(float(df[col].max()))
                     except Exception:
                         y = 0
+                # Extract per-timestep labels for early-warning windowing.
+                try:
+                    raw_labels = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+                    df_tmp = df.assign(_lbl=raw_labels)
+                    lbl_resampled = X_df_resampled.copy()
+                    lbl_resampled['_lbl'] = df_tmp.resample(freq)['_lbl'].max().reindex(lbl_resampled.index).fillna(0).astype(int)
+                    y_seq_full = lbl_resampled['_lbl'].values.astype(np.int8)
+                    # Find first onset hour index in the resampled sequence
+                    onset_indices = np.where(y_seq_full == 1)[0]
+                    if len(onset_indices) > 0:
+                        onset_hour = int(onset_indices[0])
+                    # Window or front-pad y_seq the same way as X
+                    n_rows_full = len(y_seq_full)
+                    if n_rows_full >= seq_len:
+                        y_seq_raw = y_seq_full[-seq_len:]
+                    else:
+                        pad_len_y = seq_len - n_rows_full
+                        y_seq_raw = np.concatenate([np.zeros(pad_len_y, dtype=np.int8), y_seq_full])
+                except Exception:
+                    y_seq_raw = None
                 break
         if y:
             break
@@ -168,17 +190,19 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
     patient_id = os.path.splitext(os.path.basename(fp))[0]
     os.makedirs(out_folder, exist_ok=True)
     out_path = os.path.join(out_folder, f"{patient_id}.pt")
-    torch.save(
-        {
-            'X': torch.tensor(X_seq),
-            'mask': torch.tensor(mask_seq),
-            'deltas': torch.tensor(delta_seq),
-            'actual_len': actual_len,
-            'y': int(y),
-            'meta': {'patient_id': patient_id, 'features': present_features},
-        },
-        out_path,
-    )
+    payload = {
+        'X': torch.tensor(X_seq),
+        'mask': torch.tensor(mask_seq),
+        'deltas': torch.tensor(delta_seq),
+        'actual_len': actual_len,
+        'y': int(y),
+        'meta': {'patient_id': patient_id, 'features': present_features},
+    }
+    if y_seq_raw is not None:
+        payload['y_seq'] = torch.tensor(y_seq_raw)
+    if onset_hour is not None:
+        payload['onset_hour'] = onset_hour
+    torch.save(payload, out_path)
     return (fp, True, out_path)
 
 
