@@ -1,128 +1,169 @@
+<div align="center">
+
 # Neonatal Sepsis Detection
 
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#)
+### Early ICU Sepsis Warning via Federated Learning
 
-Research codebase for early sepsis detection in ICU patients using clinical time-series data. Combines a Transformer and a GRU-D model in an ensemble, trained both locally and via Federated Learning (Flower). Evaluation uses a frozen held-out test set with clinical metrics (sensitivity @ specificity, alert fatigue rate, NNAlert) in addition to standard AUROC/AUPRC.
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.9%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Flower](https://img.shields.io/badge/Flower-1.23.0-00A9A5?style=flat-square)](https://flower.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.95%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Tests](https://img.shields.io/badge/Tests-75%20passing-2ea44f?style=flat-square)](./tests/)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](./LICENSE)
 
----
+A research system for early detection of sepsis in ICU patients using clinical time-series data.
+Combines a **Transformer** and **GRU-D** ensemble with **Federated Learning** — enabling multi-hospital
+training without sharing patient data.
 
-## Table of Contents
+[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Dashboard](#-dashboard) · [API](#-api-server) · [Model Card](./MODEL_CARD.md)
 
-- [Project Overview](#project-overview)
-- [Repository Structure](#repository-structure)
-- [Setup](#setup)
-- [Dataset](#dataset)
-- [Quick Start — One Command](#quick-start--one-command)
-- [Step-by-Step Manual Run](#step-by-step-manual-run)
-  - [1. Preprocess raw data](#1-preprocess-raw-data)
-  - [2. Create frozen splits](#2-create-frozen-splits)
-  - [3. Train local baseline](#3-train-local-baseline)
-  - [4. Federated learning simulation](#4-federated-learning-simulation)
-  - [5. Evaluate on test set](#5-evaluate-on-test-set)
-  - [6. Generate plots](#6-generate-plots)
-- [Optional Tools](#optional-tools)
-- [Dashboard](#dashboard)
-- [API Server](#api-server)
-- [Docker](#docker)
-- [Running Tests](#running-tests)
-- [Configuration](#configuration)
+</div>
 
 ---
 
-## Project Overview
+## Overview
 
-| Component | Details |
+Sepsis is a life-threatening condition where early detection dramatically improves patient outcomes. This system trains on 40,000+ ICU patient records from the PhysioNet 2019 Challenge, learning to predict sepsis onset from routine clinical measurements — vitals, lab values, and demographics — up to **6 hours in advance**.
+
+The federated design means individual hospitals never share raw patient data. Each institution trains locally; only model weights are aggregated — making this architecture viable for real-world deployment under HIPAA and similar data governance requirements.
+
+| | |
 |---|---|
-| **Input** | Per-patient `.psv` files (PhysioNet 2019 format, 40 features × up to 48 hourly timesteps) |
-| **Models** | TimeSeriesTransformer · GRU-D · Ensemble blend · Temperature Scaling calibration |
-| **Training** | Focal loss, warmup + cosine LR, early stopping, optional MLflow logging |
-| **Federated** | Flower (flwr) with FedAvg / FedProx / FedBN strategies |
-| **Evaluation** | Frozen 70/15/15 patient split — test set never seen during training |
-| **Serving** | FastAPI v2 with MC Dropout CIs, Prometheus `/metrics`, audit log |
-| **Dashboard** | 5-page Streamlit app (summary, prediction, metrics, training runs, clinical metrics) |
+| **Input** | 40-feature × 48-timestep ICU windows per patient (vitals, labs, demographics) |
+| **Models** | TimeSeriesTransformer · GRU-D · Ensemble · Temperature Scaling calibration |
+| **Training** | Focal loss · Warmup + cosine LR · Early stopping · MLflow tracking · Optuna HPO |
+| **Federated** | Flower with FedAvg / FedProx / FedBN strategies · Non-IID simulation |
+| **Evaluation** | Frozen 70/15/15 split · AUROC · AUPRC · Clinical metrics · 95% bootstrap CIs |
+| **Serving** | FastAPI v2 · MC Dropout uncertainty · Prometheus metrics · Audit log |
+| **Dashboard** | 5-page Streamlit app · Interactive ROC/PRC · Clinical metric explorer |
 
 ---
 
-## Repository Structure
+## Architecture
 
 ```
-.
-├── app.py                        # Streamlit dashboard launcher
-├── app_pages/
-│   ├── 1_00_📘_Project_Summary.py
-│   ├── 1_03_📈_Predict.py
-│   ├── 1_04_🧪_Model_Metrics.py
-│   ├── 1_05_📂_Training_Runs.py
-│   └── 1_06_🏥_Clinical_Metrics.py
-├── configs/
-│   └── base.yaml                 # All hyperparameters
-├── scripts/
-│   ├── run_pipeline.py           # One-command end-to-end orchestrator
-│   ├── run_fl_sim.py             # Automated FL simulation
-│   ├── create_splits.py          # Create frozen 70/15/15 splits
-│   ├── create_windowed_dataset.py# Sliding-window early-warning dataset
-│   ├── cross_validate.py         # 5-fold stratified CV
-│   └── optuna_search.py          # Bayesian hyperparameter optimisation
-├── src/
-│   ├── parallel_preprocess.py    # PSV → per-patient .pt tensors
-│   ├── dataset.py                # PatientDataset (normalisation, augmentation)
-│   ├── model.py                  # TimeSeriesTransformer (CLS token, pad mask)
-│   ├── model_grud.py             # GRU-D (per-feature decay, empirical mean)
-│   ├── ensemble.py               # Ensemble blending
-│   ├── calibration.py            # Temperature Scaling
-│   ├── train_local.py            # Local training loop
-│   ├── split_clients.py          # Partition patients into FL client folders
-│   ├── fl_server.py              # Flower server (FedAvg / FedProx)
-│   ├── fl_client.py              # Flower client
-│   ├── fl_fedbn.py               # FedBN strategy
-│   ├── evaluate.py               # Metrics on frozen test set
-│   ├── plot_results.py           # ROC / PRC comparison plots
-│   ├── clinical_metrics.py       # Sensitivity@spec, NNAlert, alert fatigue
-│   ├── api.py                    # FastAPI v2 inference server
-│   ├── config.py                 # Path constants (env-var overrideable)
-│   ├── config_schema.py          # Pydantic ProjectConfig
-│   ├── logging_config.py         # Shared logger factory
-│   └── utils.py                  # ensure_dir helper
-├── tests/                        # 75 unit + integration tests
-├── data/
-│   ├── raw/                      # Raw .psv files (gitignored)
-│   ├── processed/                # Generated .pt tensors (gitignored)
-│   └── splits/                   # Frozen train/val/test indices (committed)
-├── MODEL_CARD.md
-├── Makefile
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DATA PIPELINE                               │
+│                                                                     │
+│  data/raw/*.psv  ──►  parallel_preprocess.py  ──►  .pt tensors     │
+│                              │                    (X, mask, Δt,    │
+│                              ▼                     y, y_seq)        │
+│                    create_splits.py                                 │
+│                    70% train / 15% val / 15% test (frozen)          │
+└─────────────────────────────────────────────────────────────────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐
+│  LOCAL TRAINING │  │ FEDERATED (FL)  │  │   HYPERPARAMETER    │
+│                 │  │                 │  │      SEARCH         │
+│ train_local.py  │  │  split_clients  │  │  optuna_search.py   │
+│  Transformer /  │  │       │         │  │  (TPE, 50 trials)   │
+│    GRU-D        │  │  ┌────┴────┐    │  └─────────────────────┘
+│                 │  │  ▼         ▼    │
+│  focal loss     │  │ Client1  Client2│
+│  warmup+cosine  │  │  │         │    │
+│  grad clipping  │  │  └────┬────┘    │
+│  temp. scaling  │  │       ▼         │
+└────────┬────────┘  │   FL Server     │
+         │           │  (FedAvg/FedBN) │
+         ▼           └────────┬────────┘
+    model_best.pt             ▼
+         │            global_best.pt
+         └──────────────────┐ │
+                            ▼ ▼
+                    ┌───────────────┐
+                    │  EVALUATION   │
+                    │  (frozen test)│
+                    │  AUROC·AUPRC  │
+                    │  Clinical KPIs│
+                    └───────┬───────┘
+                            ▼
+              ┌─────────────────────────┐
+              │  SERVING & DASHBOARD    │
+              │                         │
+              │  FastAPI  ──  /predict  │
+              │  Streamlit ── 5 pages   │
+              │  Prometheus ─ /metrics  │
+              └─────────────────────────┘
 ```
+
+### Models
+
+**TimeSeriesTransformer** — Linear projection → 2-layer Transformer encoder (4 heads, d_model=128) → CLS token pooling with pad mask → sigmoid output. Sinusoidal positional encoding.
+
+**GRU-D** — Faithful implementation with per-feature exponential decay, empirical mean imputation, and hidden-state decay. Handles irregular missingness natively — no imputation preprocessing needed.
+
+**Ensemble** — Weighted probability blend of Transformer + GRU-D (α=0.5). Temperature Scaling calibration (LBFGS on val set) applied post-training.
 
 ---
 
-## Setup
-
-**Python 3.11+ required.**
+## Quick Start
 
 ```bash
-# 1. Create and activate a virtual environment
+# 1. Clone and switch to the development branch
+git clone https://github.com/pranay9981/Neonatal-Sepsis.git
+cd Neonatal-Sepsis
+git checkout improvements/v2
+
+# 2. Set up environment
+python -m venv .venv
+.venv\Scripts\Activate.ps1        # Windows
+# source .venv/bin/activate       # macOS / Linux
+pip install -r requirements.txt
+
+# 3. Place raw .psv files in data/raw/, then run everything
+python scripts/run_pipeline.py --model transformer --epochs 50 --fl_rounds 20 --n_clients 5
+
+# 4. Launch the dashboard
+streamlit run app.py
+```
+
+> **New here?** See [GETTING_STARTED.md](./GETTING_STARTED.md) for a detailed step-by-step walkthrough from zero.
+
+---
+
+## Installation
+
+**Requirements:** Python 3.11+, 8 GB RAM (16 GB recommended), 10 GB disk
+
+```bash
 python -m venv .venv
 
-# Windows PowerShell
+# Windows
 .venv\Scripts\Activate.ps1
-# Linux / macOS
+
+# macOS / Linux
 source .venv/bin/activate
 
-# 2. Install all dependencies
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **Windows note:** If `flwr` install fails, try `pip install flwr==1.23.0 --no-deps` then install remaining deps individually.
+Verify the install:
+
+```bash
+python -c "import torch, flwr, streamlit, fastapi, mlflow, optuna; print('All packages OK')"
+python -m pytest tests/ -v   # 75 tests should pass
+```
+
+> **Windows note:** If `flwr` fails, run `pip install flwr==1.23.0 --no-deps` first, then re-run `pip install -r requirements.txt`.
 
 ---
 
 ## Dataset
 
-Place raw `.psv` files under `data/raw/`. Each file is one patient, named `p000001.psv` etc. (PhysioNet / CinC Challenge 2019 format).
+Download the **PhysioNet / CinC Challenge 2019** training set from [physionet.org](https://physionet.org/content/challenge-2019/1.0.0/) and place the `.psv` files in `data/raw/`.
 
-**File format** — pipe-separated, one row per ICU hour:
+```
+data/
+└── raw/
+    ├── p000001.psv
+    ├── p000002.psv
+    └── ...          ← one file per patient (~40,000 files)
+```
+
+Each file is pipe-separated with one row per ICU hour:
 
 ```
 HR|O2Sat|Temp|SBP|MAP|DBP|Resp|EtCO2|BaseExcess|HCO3|FiO2|pH|PaCO2|SaO2|AST|BUN|
@@ -131,53 +172,36 @@ Phosphate|Potassium|Bilirubin_total|TroponinI|Hct|Hgb|PTT|WBC|Fibrinogen|Platele
 Age|Gender|Unit1|Unit2|HospAdmTime|ICULOS|SepsisLabel
 ```
 
-- 40 feature columns (vitals, labs, demographics) + `SepsisLabel` (0/1)
-- Missing values are `NaN` — the pipeline handles them via masking and GRU-D decay
-- Keep the header row in every file
+**40 features** (vitals · labs · demographics) + `SepsisLabel` (0/1). Missing values are `NaN` — handled natively by the pipeline via observation masking and GRU-D decay. Keep the header row in every file.
 
 ---
 
-## Quick Start — One Command
+## Pipeline
 
-The pipeline orchestrator handles all steps automatically, skipping steps whose outputs already exist:
+The orchestrator handles all 7 steps automatically, skipping any step whose outputs already exist:
 
 ```bash
 python scripts/run_pipeline.py
 ```
 
-Or with custom settings:
+| Flag | Effect |
+|---|---|
+| `--model transformer\|grud` | Model architecture |
+| `--epochs N` | Training epochs (default 10) |
+| `--fl_rounds N` | Federated rounds (default 5) |
+| `--n_clients N` | Number of simulated hospitals (default 3) |
+| `--force_preprocess` | Re-run preprocessing even if outputs exist |
+| `--force_train` | Re-run local training |
+| `--force_eval` | Re-run evaluation only |
+| `--skip_fl` | Local training only, no federated step |
+| `--skip_local_train` | Federated only, skip local baseline |
 
-```bash
-python scripts/run_pipeline.py \
-  --raw_folder data/raw \
-  --model transformer \
-  --epochs 50 \
-  --fl_rounds 20 \
-  --n_clients 5
-```
+### Step-by-step
 
-**Force flags** — re-run individual steps:
+<details>
+<summary><strong>Step 1 — Preprocess raw data</strong></summary>
 
-```bash
-python scripts/run_pipeline.py --force_preprocess   # re-run preprocessing
-python scripts/run_pipeline.py --force_train        # re-run local training
-python scripts/run_pipeline.py --force_eval         # re-run evaluation only
-python scripts/run_pipeline.py --skip_fl            # skip federated learning
-```
-
-Or use the Makefile:
-
-```bash
-make pipeline
-```
-
----
-
-## Step-by-Step Manual Run
-
-### 1. Preprocess raw data
-
-Converts each `.psv` file into a per-patient `.pt` tensor containing `X` (features), `mask` (observation mask), `deltas` (time-since-last-observation), `y` (patient label), `y_seq` (per-timestep labels), and `onset_hour`.
+Converts each `.psv` into a per-patient `.pt` tensor: `X`, `mask`, `deltas`, `y`, `y_seq`, `onset_hour`.
 
 ```bash
 python src/parallel_preprocess.py \
@@ -187,13 +211,14 @@ python src/parallel_preprocess.py \
   --nprocs 8
 ```
 
-Output: `data/processed/patients/` with one `.pt` per patient + `index_with_labels.pt`.
+Output: `data/processed/patients/` — one `.pt` per patient + `index_with_labels.pt`.
 
----
+</details>
 
-### 2. Create frozen splits
+<details>
+<summary><strong>Step 2 — Create frozen splits</strong></summary>
 
-Creates a frozen 70% train / 15% val / 15% test patient-level stratified split. Run this **once** — the test set must never be touched during training or model selection.
+Stratified 70/15/15 patient-level split. Run **once** — the test set must never be seen during training.
 
 ```bash
 python scripts/create_splits.py \
@@ -203,14 +228,12 @@ python scripts/create_splits.py \
 
 Output: `data/splits/train_index.pt`, `val_index.pt`, `test_index.pt`.
 
----
+</details>
 
-### 3. Train local baseline
-
-#### Option A — Single training run
+<details>
+<summary><strong>Step 3 — Train local baseline</strong></summary>
 
 ```bash
-# Transformer
 python src/train_local.py \
   --index data/splits/train_index.pt \
   --model transformer \
@@ -218,30 +241,103 @@ python src/train_local.py \
   --batch_size 64 \
   --lr 1e-4 \
   --patience 10 \
-  --run_name local_transformer
-
-# GRU-D
-python src/train_local.py \
-  --index data/splits/train_index.pt \
-  --model grud \
-  --epochs 50 \
-  --batch_size 64 \
-  --run_name local_grud
+  --run_name local_transformer \
+  --use_temperature_scaling
 ```
 
-The run directory and best checkpoint path are printed on completion:
-```
-Run folder : runs/20260613T120000Z__local_transformer/
-Best ckpt  : runs/20260613T120000Z__local_transformer/checkpoints/model_best.pt
+Best checkpoint saved to `runs/<timestamp>__local_transformer/checkpoints/model_best.pt`.
+
+**Optional flags:**
+
+| Flag | Effect |
+|---|---|
+| `--use_mlflow` | Log params + metrics to MLflow (`mlflow ui` to view) |
+| `--scaler_path <path>` | Normalise features using pre-fit scaler |
+| `--augment` | Gaussian jitter augmentation |
+| `--use_temperature_scaling` | Calibrate output probabilities after training |
+
+</details>
+
+<details>
+<summary><strong>Step 4 — Federated learning simulation</strong></summary>
+
+**Partition patients into client folders (test set excluded):**
+
+```bash
+python src/split_clients.py \
+  --processed_folder data/processed/patients \
+  --out_root data/processed/clients \
+  --n_clients 5 \
+  --splits_dir data/splits
 ```
 
-Optional flags:
-- `--use_mlflow` — log params and metrics to MLflow (`mlflow ui` to view)
-- `--scaler_path data/processed/patients/scaler.json` — normalise features
-- `--augment` — enable Gaussian jitter augmentation
-- `--use_temperature_scaling` — calibrate output probabilities after training
+Add `--heterogeneous` for non-IID (skewed class distribution per hospital).
 
-#### Option B — 5-fold cross-validation
+**Run the simulation (automated — server + clients started automatically):**
+
+```bash
+python scripts/run_fl_sim.py \
+  --client_indexes \
+      data/processed/clients/client1/index.pt \
+      data/processed/clients/client2/index.pt \
+      data/processed/clients/client3/index.pt \
+      data/processed/clients/client4/index.pt \
+  --model transformer \
+  --rounds 20 \
+  --local_epochs 1
+```
+
+Output: `server_out/global_best.pt`.
+
+**Use FedBN instead of FedAvg:**
+
+```bash
+python src/fl_server.py --strategy fedbn --model transformer --rounds 20
+```
+
+</details>
+
+<details>
+<summary><strong>Step 5 — Evaluate on frozen test set</strong></summary>
+
+```bash
+# Federated model
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out/global_best.pt \
+  --model transformer \
+  --out_file eval_results_federated.json
+
+# Local baseline
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt runs/<your-run>/checkpoints/model_best.pt \
+  --model transformer \
+  --out_file eval_results_local.json
+```
+
+Output JSON includes: `auroc`, `auprc`, `precision`, `recall`, `f1`, `threshold`, `y_true`, `y_prob`, and 95% bootstrap CIs.
+
+</details>
+
+<details>
+<summary><strong>Step 6 — Generate comparison plots</strong></summary>
+
+```bash
+python src/plot_results.py \
+  --results eval_results_federated.json eval_results_local.json \
+  --out_file model_comparison_plot.png
+```
+
+Produces ROC and PRC curves with bootstrap CI bands for all models.
+
+</details>
+
+---
+
+## Experiment Tools
+
+### 5-Fold Cross-Validation
 
 ```bash
 python scripts/cross_validate.py \
@@ -250,9 +346,9 @@ python scripts/cross_validate.py \
   --epochs 20
 ```
 
-Reports mean ± std AUROC and AUPRC across folds.
+Reports mean ± std AUROC and AUPRC across folds with bootstrap CIs.
 
-#### Option C — Bayesian hyperparameter search (Optuna)
+### Bayesian Hyperparameter Search
 
 ```bash
 python scripts/optuna_search.py \
@@ -260,126 +356,11 @@ python scripts/optuna_search.py \
   --n_trials 50
 ```
 
-Searches: `lr`, `d_model`, `n_heads`, `dropout`, `batch_size`. Best params printed and saved.
+Searches `lr`, `d_model`, `n_heads`, `dropout`, `batch_size` using TPE + median pruner. Best params saved to `optuna_best_params.json`.
 
----
+### Early-Warning Sliding-Window Dataset
 
-### 4. Federated learning simulation
-
-#### Option A — Automated (recommended)
-
-Launches server and all clients as subprocesses automatically:
-
-```bash
-# First, partition patients into FL client folders (test patients excluded)
-python src/split_clients.py \
-  --processed_folder data/processed/patients \
-  --out_root data/processed/clients \
-  --n_clients 3 \
-  --splits_dir data/splits
-
-# Run FL simulation
-python scripts/run_fl_sim.py \
-  --client_indexes \
-      data/processed/clients/client1/index.pt \
-      data/processed/clients/client2/index.pt \
-  --model transformer \
-  --rounds 20 \
-  --local_epochs 1 \
-  --n_features 40 \
-  --seq_len 48
-```
-
-Output: `server_out/global_best.pt` — best federated model.
-
-#### Option B — Manual (separate terminals)
-
-```bash
-# Terminal 1 — Server
-python src/fl_server.py \
-  --model transformer \
-  --n_features 40 \
-  --seq_len 48 \
-  --min_clients 2 \
-  --rounds 20
-
-# Terminal 2 — Client 1
-python src/fl_client.py \
-  --index data/processed/clients/client1/index.pt \
-  --model transformer \
-  --server_address 127.0.0.1:8080
-
-# Terminal 3 — Client 2
-python src/fl_client.py \
-  --index data/processed/clients/client2/index.pt \
-  --model transformer \
-  --server_address 127.0.0.1:8080
-```
-
-#### FedBN strategy
-
-```bash
-python src/fl_server.py --strategy fedbn --model transformer --rounds 20
-```
-
-#### Non-IID (heterogeneous) simulation
-
-```bash
-python src/split_clients.py \
-  --processed_folder data/processed/patients \
-  --out_root data/processed/clients \
-  --n_clients 5 \
-  --splits_dir data/splits \
-  --heterogeneous
-```
-
----
-
-### 5. Evaluate on test set
-
-Always evaluate on the **frozen test split** (`data/splits/test_index.pt`):
-
-```bash
-# Federated model
-python src/evaluate.py \
-  --index data/splits/test_index.pt \
-  --ckpt server_out/global_best.pt \
-  --model transformer \
-  --n_features 40 \
-  --seq_len 48 \
-  --out_file eval_results_federated.json
-
-# Local baseline (replace the path with your run's checkpoint)
-python src/evaluate.py \
-  --index data/splits/test_index.pt \
-  --ckpt runs/20260613T120000Z__local_transformer/checkpoints/model_best.pt \
-  --model transformer \
-  --n_features 40 \
-  --seq_len 48 \
-  --out_file eval_results_local.json
-```
-
-Outputs AUROC, AUPRC, precision, recall, F1, calibration, and 95% bootstrap CIs.
-
----
-
-### 6. Generate plots
-
-```bash
-python src/plot_results.py \
-  --results eval_results_federated.json eval_results_local.json \
-  --out_file model_comparison_plot.png
-```
-
-Produces ROC and PRC comparison plots with bootstrap confidence intervals.
-
----
-
-## Optional Tools
-
-### Early-warning sliding-window dataset
-
-Creates one window per ICU hour with a forward-looking label ("will sepsis onset within the next 6 hours?"):
+Creates one sample per ICU hour with a forward-looking label — *"will sepsis onset within the next 6 hours?"*
 
 ```bash
 python scripts/create_windowed_dataset.py \
@@ -389,15 +370,15 @@ python scripts/create_windowed_dataset.py \
   --stride 1
 ```
 
-### Clinical metrics
+### Clinical Metrics (Python API)
 
 ```python
-from src.clinical_metrics import compute_all
 import json
+from src.clinical_metrics import compute_all
 
 results = json.load(open("eval_results_federated.json"))
 metrics = compute_all(results["y_true"], results["y_prob"], threshold=0.5)
-print(metrics)
+# Returns: sensitivity@spec, alert_fatigue_rate, nn_alert, subgroup breakdown
 ```
 
 ---
@@ -406,39 +387,40 @@ print(metrics)
 
 ```bash
 streamlit run app.py
+# Open http://localhost:8501
 ```
-
-Opens at `http://localhost:8501`. Pages:
 
 | Page | Description |
 |---|---|
-| Project Summary | Architecture overview, dataset stats |
-| Predict | Single-patient inference (manual input or file upload) |
-| Model Metrics | ROC/PRC curves, confusion matrix, calibration |
-| Training Runs | Browse `runs/` artifacts, compare metrics |
-| Clinical Metrics | Sensitivity @ specificity, alert fatigue, NNAlert |
+| **Project Summary** | Architecture overview, dataset statistics, design decisions |
+| **Predict** | Single-patient inference — manual input or file upload |
+| **Model Metrics** | Interactive Plotly ROC/PRC with 95% bootstrap CI bands, confusion matrix |
+| **Training Runs** | Browse `runs/` artifacts, compare AUROC/AUPRC across experiments |
+| **Clinical Metrics** | Sensitivity @ specificity, alert fatigue rate, NNAlert — with explanations |
 
 ---
 
 ## API Server
 
 ```bash
+export SEPSIS_MODEL_PATH=server_out/global_best.pt
+export SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
+
 uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Endpoints:
+| Endpoint | Method | Description |
+|---|---|---|
+| `/v2/predict` | `POST` | Sepsis probability + optional MC Dropout confidence intervals |
+| `/health` | `GET` | Model version, uptime |
+| `/metrics` | `GET` | Prometheus metrics |
 
-| Endpoint | Description |
-|---|---|
-| `POST /v2/predict` | Inference — returns probability + optional MC Dropout CIs |
-| `GET /health` | Uptime and model version |
-| `GET /metrics` | Prometheus metrics |
-
-Set environment variables to configure paths:
+**Example request:**
 
 ```bash
-SEPSIS_MODEL_PATH=server_out/global_best.pt
-SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
+curl -X POST http://localhost:8000/v2/predict \
+  -H "Content-Type: application/json" \
+  -d '{"features": [[...]]}'
 ```
 
 ---
@@ -449,69 +431,139 @@ SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
 # Build
 docker build -t neonatal-sepsis .
 
-# Run API
+# Run API server
 docker run -p 8000:8000 \
   -v $(pwd)/server_out:/app/server_out:ro \
   neonatal-sepsis
 
-# Or with docker-compose (API + dashboard)
+# API + dashboard together
 docker-compose up
 ```
 
+The Dockerfile uses a multi-stage build (builder + slim runtime) and runs as a non-root user (uid=1000) with a `/health` HEALTHCHECK.
+
 ---
 
-## Running Tests
+## Testing
 
 ```bash
+# Run full test suite
 python -m pytest tests/ -v
-```
 
-75 tests covering preprocessing, dataset loading, model forward passes, training loop, evaluation metrics, split correctness, and windowed dataset creation.
-
-```bash
-# Run a specific test file
+# Run a specific file
 python -m pytest tests/test_model.py -v
 
-# Run with coverage
+# With coverage report
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
+
+**75 tests** covering preprocessing, dataset loading, model forward passes, training loop, FL client/server, evaluation metrics, split correctness, and windowed dataset creation.
 
 ---
 
 ## Configuration
 
-All hyperparameters are in `configs/base.yaml`. Load in code with:
+All hyperparameters live in `configs/base.yaml`. Load programmatically with:
 
 ```python
 from src.config_schema import load_config
 cfg = load_config("configs/base.yaml")
-print(cfg.training.lr)        # 0.0001
-print(cfg.federated.rounds)   # 20
+print(cfg.training.lr)       # 0.0001
+print(cfg.federated.rounds)  # 20
 ```
 
-Key sections:
+**Key sections:**
 
 ```yaml
-data:
-  seq_len: 48        # timesteps per patient window
-  n_features: 40     # input feature count
-
 model:
-  name: transformer  # transformer | grud
+  name: transformer     # transformer | grud
   d_model: 128
   n_heads: 4
+  num_layers: 2
 
 training:
   epochs: 50
   batch_size: 64
   lr: 1.0e-4
-  use_focal: false   # focal loss for class imbalance
-  augment: true      # Gaussian jitter augmentation
+  use_focal: true       # focal loss for class imbalance
+  augment: true         # Gaussian jitter
+  use_temperature_scaling: true
 
 federated:
   rounds: 20
   n_clients: 5
-  strategy: fedavg   # fedavg | fedbn
-  mu: 0.01           # FedProx proximal term (0 = plain FedAvg)
+  strategy: fedavg      # fedavg | fedbn
+  mu: 0.01              # FedProx proximal term (0 = plain FedAvg)
+  heterogeneous: false  # non-IID hospital simulation
 ```
 
+---
+
+## Repository Structure
+
+```
+├── app.py                          # Streamlit entry point
+├── app_pages/                      # One file per dashboard page
+├── configs/
+│   └── base.yaml                   # All hyperparameters
+├── data/
+│   ├── raw/                        # Place .psv files here (gitignored)
+│   ├── processed/                  # Generated tensors (gitignored)
+│   └── splits/                     # Regenerated by create_splits.py
+├── scripts/
+│   ├── run_pipeline.py             # End-to-end orchestrator
+│   ├── run_fl_sim.py               # Automated FL simulation
+│   ├── create_splits.py            # Frozen 70/15/15 split
+│   ├── create_windowed_dataset.py  # Sliding-window labels
+│   ├── cross_validate.py           # 5-fold stratified CV
+│   └── optuna_search.py            # Bayesian HPO
+├── src/
+│   ├── parallel_preprocess.py      # PSV → .pt tensors
+│   ├── dataset.py                  # PatientDataset
+│   ├── model.py                    # TimeSeriesTransformer
+│   ├── model_grud.py               # GRU-D
+│   ├── ensemble.py                 # Ensemble blending
+│   ├── calibration.py              # Temperature Scaling
+│   ├── train_local.py              # Local training loop
+│   ├── split_clients.py            # FL data partitioning
+│   ├── fl_server.py                # Flower server
+│   ├── fl_client.py                # Flower client
+│   ├── fl_fedbn.py                 # FedBN strategy
+│   ├── evaluate.py                 # Test-set evaluation
+│   ├── plot_results.py             # ROC / PRC plots
+│   ├── clinical_metrics.py         # Clinical KPIs
+│   ├── api.py                      # FastAPI v2
+│   ├── config_schema.py            # Pydantic ProjectConfig
+│   └── logging_config.py           # Logger factory
+├── tests/                          # 75 unit + integration tests
+├── Dockerfile
+├── docker-compose.yml
+├── Makefile
+├── MODEL_CARD.md
+├── GETTING_STARTED.md
+└── requirements.txt
+```
+
+---
+
+## Citation
+
+If you use this codebase, please cite the underlying dataset:
+
+```bibtex
+@article{reyna2020early,
+  title     = {Early Prediction of Sepsis from Clinical Data:
+               The PhysioNet/Computing in Cardiology Challenge 2019},
+  author    = {Reyna, Matthew A and others},
+  journal   = {Critical Care Medicine},
+  year      = {2020}
+}
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
+
+> **Clinical disclaimer:** This system is a research prototype intended to support — not replace — clinical judgment. It has not been validated in a prospective trial and must not be used for autonomous clinical decision-making.
