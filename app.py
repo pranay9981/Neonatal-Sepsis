@@ -118,40 +118,56 @@ st.markdown("""
   }
   /* ── Section card ─────────────────────────────────────────────── */
   .section-card {
-    background: #F8FAFC;
+    background: #F8FAFC !important;
     border-left: 4px solid #2196F3;
     border-radius: 0 8px 8px 0;
     padding: 14px 18px;
     margin: 10px 0;
+    color: #1E293B !important;
+  }
+  .section-card b, .section-card strong {
+    color: #1E3A5F !important;
   }
   /* ── Callout box ──────────────────────────────────────────────── */
   .callout-success {
-    background: #E8F5E9;
+    background: #E8F5E9 !important;
     border-left: 4px solid #4CAF50;
     border-radius: 0 8px 8px 0;
     padding: 12px 16px;
-    color: #2E7D32;
-    font-weight: 600;
+    color: #1B5E20 !important;
+    font-weight: 500;
     margin: 12px 0;
   }
   .callout-info {
-    background: #E3F2FD;
+    background: #E3F2FD !important;
     border-left: 4px solid #2196F3;
     border-radius: 0 8px 8px 0;
     padding: 12px 16px;
-    color: #1565C0;
+    color: #0D47A1 !important;
     margin: 12px 0;
+  }
+  .callout-info b, .callout-info strong,
+  .callout-success b, .callout-success strong {
+    color: inherit !important;
   }
   /* ── Feature category chips ───────────────────────────────────── */
   .chip {
     display: inline-block;
-    background: #EFF6FF;
-    color: #1D4ED8;
+    background: #EFF6FF !important;
+    color: #1D4ED8 !important;
     border-radius: 12px;
     padding: 2px 10px;
     font-size: 0.78rem;
     font-weight: 600;
     margin: 2px;
+  }
+  /* ── Step number circles ──────────────────────────────────────── */
+  .step-num {
+    background: #1E3A5F !important;
+    color: white !important;
+  }
+  .step-desc {
+    color: #475569 !important;
   }
   /* hide default streamlit title padding */
   .block-container { padding-top: 1rem; }
