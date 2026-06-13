@@ -1,15 +1,22 @@
 # src/train_local.py
 """
 Local training script.
-Key improvements over original:
-- Uses patient-level stratified train/val split (no data leakage between patients).
-- Computes pos_weight from all labels, not a 2000-sample estimate.
-- Replaces print() with structured logging.
-- Uses absolute default paths anchored to project root.
+
+Improvements in this version:
+- Patient-level stratified train/val split (no data leakage between patients).
+- Pos_weight computed from all labels, not a sample estimate.
+- Optional Focal Loss for severe class imbalance (--use_focal).
+- Gradient clipping (max_norm=1.0) for training stability.
+- Linear warmup + cosine decay LR schedule instead of ReduceLROnPlateau.
+- Saves best AUROC checkpoint (model_best.pt) and best AUPRC checkpoint (model_best_ap.pt).
+- Threshold calibration via Youden's J after training; saved to threshold.json.
+- GRU-D empirical mean loaded from scaler.json when available.
+- Structured logging throughout.
 """
 
-import os
 import json
+import math
+import os
 import random
 import argparse
 from datetime import datetime, timezone
@@ -18,11 +25,12 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
+from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve
+from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Subset, random_split
 from tqdm import tqdm
-from sklearn.metrics import roc_auc_score, average_precision_score
-from sklearn.model_selection import StratifiedShuffleSplit
 
 from dataset import PatientDataset
 from model import TimeSeriesTransformer
@@ -35,7 +43,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 
 
 # -------------------------
-# Module-level collate for GRU-D (must be picklable for Windows multiprocessing)
+# Collate for GRU-D (must be picklable for Windows multiprocessing)
 # -------------------------
 def collate_grud(batch):
     Xs, masks, deltas, ys = zip(*batch)
@@ -74,6 +82,29 @@ def safe_metrics(y_true, logits):
         return 0.0, 0.0
 
 
+def calibrate_threshold(val_logits, val_y):
+    """
+    Find the decision threshold that maximises Youden's J = sensitivity + specificity - 1.
+    Returns 0.5 if calibration is not possible (single class or degenerate predictions).
+
+    sklearn's roc_curve prepends an artificial boundary point at threshold=max(score)+1
+    to anchor the curve at (fpr=0, tpr=0). We exclude thresholds outside [0, 1] to avoid
+    returning that boundary value.
+    """
+    y = np.array(val_y)
+    if len(np.unique(y)) < 2:
+        return 0.5
+    probs = torch.sigmoid(torch.tensor(val_logits, dtype=torch.float32)).numpy()
+    fpr, tpr, thresholds = roc_curve(y, probs)
+    j = tpr - fpr
+    # Restrict to thresholds that are valid probabilities in [0, 1].
+    valid = np.isfinite(thresholds) & (thresholds >= 0.0) & (thresholds <= 1.0)
+    if not valid.any():
+        return 0.5
+    j_valid = np.where(valid, j, -np.inf)
+    return float(thresholds[int(np.argmax(j_valid))])
+
+
 def build_model_from_sample(sample_X, model_name):
     if model_name == "transformer":
         return TimeSeriesTransformer(n_features=sample_X.shape[1], seq_len=sample_X.shape[0])
@@ -83,6 +114,66 @@ def build_model_from_sample(sample_X, model_name):
         raise ValueError("Unknown model: " + model_name)
 
 
+def _load_grud_empirical_mean(index_path: str, n_features: int) -> torch.Tensor | None:
+    """Load per-feature training mean from scaler.json adjacent to the index."""
+    for candidate in [
+        os.path.join(os.path.dirname(index_path), "scaler.json"),
+        os.path.join(os.path.dirname(index_path), "..", "scaler.json"),
+    ]:
+        if os.path.exists(candidate):
+            with open(candidate) as f:
+                s = json.load(f)
+            mean = s.get("mean", [])
+            if len(mean) == n_features:
+                logger.info("Loaded GRU-D empirical mean from %s", candidate)
+                return torch.tensor(mean, dtype=torch.float32)
+            logger.warning(
+                "scaler.json has %d features but model expects %d; skipping.", len(mean), n_features
+            )
+    logger.warning("scaler.json not found near %s; GRU-D will use zero mean.", index_path)
+    return None
+
+
+# -------------------------
+# Loss functions
+# -------------------------
+class FocalLoss(nn.Module):
+    """
+    Focal loss for binary classification.
+    Down-weights easy examples so training focuses on hard, minority-class samples.
+    gamma=2 is the value from the original paper (Lin et al., 2017).
+    """
+
+    def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None):
+        super().__init__()
+        self.gamma = gamma
+        self.pos_weight = pos_weight
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = F.binary_cross_entropy_with_logits(
+            logits, targets, pos_weight=self.pos_weight, reduction="none"
+        )
+        probs = torch.sigmoid(logits)
+        p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
+        return ((1.0 - p_t) ** self.gamma * bce).mean()
+
+
+# -------------------------
+# LR schedule
+# -------------------------
+def make_warmup_cosine_scheduler(optimizer, warmup_epochs: int, total_epochs: int):
+    """Linear warmup for `warmup_epochs` then cosine decay to 0."""
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / max(1, warmup_epochs)
+        progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
+# -------------------------
+# Early stopping
+# -------------------------
 class EarlyStopping:
     """Stop training when val_auc stops improving for `patience` consecutive epochs."""
 
@@ -104,11 +195,10 @@ class EarlyStopping:
         return False
 
 
+# -------------------------
+# Stratified split
+# -------------------------
 def stratified_train_val_split(ds: PatientDataset, val_ratio: float = 0.2, seed: int = 42):
-    """
-    Patient-level stratified split using labels stored in the index file.
-    Falls back to random split if stratification is not possible.
-    """
     labels_raw = ds.y_indexed if ds.y_indexed is not None else [float(ds[i][-1]) for i in range(len(ds))]
     labels = [int(float(l)) for l in labels_raw]
 
@@ -142,6 +232,10 @@ def train(
     checkpoint_root: str | None = None,
     preferred_workers: int = 4,
     patience: int = 5,
+    use_focal: bool = False,
+    focal_gamma: float = 2.0,
+    warmup_epochs: int = 3,
+    clip_grad: float = 1.0,
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -165,18 +259,20 @@ def train(
         "device": device,
         "timestamp_utc": ts,
         "preferred_workers": preferred_workers,
+        "use_focal": use_focal,
+        "focal_gamma": focal_gamma,
+        "warmup_epochs": warmup_epochs,
+        "clip_grad": clip_grad,
     }
     with open(os.path.join(run_folder, "run_info.json"), "w") as fh:
         json.dump(run_info, fh, indent=2)
 
-    # Dataset
     mode = "grud" if model_name == "grud" else "transformer"
     ds = PatientDataset(index_path, mode=mode)
     n = len(ds)
     if n < 2:
         raise ValueError(f"Need at least 2 patients, found {n}")
 
-    # Stratified split + full-dataset pos_weight
     train_ds, val_ds, all_labels = stratified_train_val_split(ds, val_ratio=0.2, seed=seed)
     pos = sum(all_labels)
     neg = n - pos
@@ -191,19 +287,29 @@ def train(
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_grud)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=min(2, num_workers), collate_fn=collate_grud)
 
-    # Model
     sample = ds[0]
     sample_X = sample[0]
     model = build_model_from_sample(sample_X, model_name).to(device)
+
+    # For GRU-D: load empirical mean so the decay targets the training distribution.
+    if model_name == "grud":
+        x_mean = _load_grud_empirical_mean(index_path, model.n_features)
+        if x_mean is not None:
+            model.set_empirical_mean(x_mean)
 
     pos_weight = torch.tensor(
         [(neg / (pos + 1e-6)) if pos > 0 else 1.0],
         dtype=torch.float32,
     ).to(device)
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    if use_focal:
+        loss_fn = FocalLoss(gamma=focal_gamma, pos_weight=pos_weight)
+        logger.info("Using Focal Loss (gamma=%.1f)", focal_gamma)
+    else:
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     opt = optim.Adam(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", patience=2, factor=0.5)
+    scheduler = make_warmup_cosine_scheduler(opt, warmup_epochs=warmup_epochs, total_epochs=epochs)
     scaler = torch.amp.GradScaler(enabled=use_amp)
 
     metrics_csv = os.path.join(run_folder, "metrics.csv")
@@ -211,7 +317,11 @@ def train(
         fh.write("epoch,train_loss,val_auc,val_ap,lr\n")
 
     best_auc = 0.0
+    best_ap = 0.0
     early_stop = EarlyStopping(patience=patience)
+
+    # Accumulate final val predictions for threshold calibration.
+    final_val_logits, final_val_y = [], []
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -220,10 +330,10 @@ def train(
 
         for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
             if model_name == "transformer":
-                Xb, yb = batch
-                Xb, yb = Xb.to(device), yb.to(device)
+                Xb, pad_mask_b, yb = batch
+                Xb, pad_mask_b, yb = Xb.to(device), pad_mask_b.to(device), yb.to(device)
                 with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
-                    logits = model(Xb)
+                    logits = model(Xb, src_key_padding_mask=pad_mask_b)
                     loss = loss_fn(logits, yb)
             else:
                 Xb, Mb, Db, yb = batch
@@ -234,6 +344,9 @@ def train(
 
             opt.zero_grad()
             scaler.scale(loss).backward()
+            if clip_grad > 0:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
             scaler.step(opt)
             scaler.update()
 
@@ -247,9 +360,9 @@ def train(
         with torch.no_grad():
             for batch in val_loader:
                 if model_name == "transformer":
-                    Xb, yb = batch
+                    Xb, pad_mask_b, yb = batch
                     with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
-                        logits = model(Xb.to(device)).cpu().numpy()
+                        logits = model(Xb.to(device), src_key_padding_mask=pad_mask_b.to(device)).cpu().numpy()
                     val_logits.extend(logits.tolist())
                     val_y.extend(yb.numpy().tolist())
                 else:
@@ -261,30 +374,46 @@ def train(
 
         auc, ap = safe_metrics(val_y, val_logits)
 
-        old_lr = opt.param_groups[0]["lr"]
-        scheduler.step(auc)
-        new_lr = opt.param_groups[0]["lr"]
-        if new_lr != old_lr:
-            logger.info("LR reduced: %.2e -> %.2e", old_lr, new_lr)
+        scheduler.step()
+        current_lr = opt.param_groups[0]["lr"]
 
         torch.save(
-            {"model_state": model.state_dict(), "epoch": epoch, "auc": auc},
+            {"model_state": model.state_dict(), "epoch": epoch, "auc": auc, "ap": ap},
             os.path.join(ckpt_dir, f"model_epoch{epoch}.pt"),
         )
         if auc > best_auc:
             best_auc = auc
             torch.save({"model_state": model.state_dict()}, os.path.join(ckpt_dir, "model_best.pt"))
+        if ap > best_ap:
+            best_ap = ap
+            torch.save({"model_state": model.state_dict()}, os.path.join(ckpt_dir, "model_best_ap.pt"))
+
+        # Keep last epoch's val predictions for threshold calibration.
+        final_val_logits, final_val_y = val_logits, val_y
 
         with open(metrics_csv, "a") as fh:
-            fh.write(f"{epoch},{train_loss:.6f},{auc:.6f},{ap:.6f},{new_lr:.8f}\n")
+            fh.write(f"{epoch},{train_loss:.6f},{auc:.6f},{ap:.6f},{current_lr:.8f}\n")
 
-        logger.info("Epoch %d/%d  train_loss=%.4f  val_auc=%.4f  val_ap=%.4f", epoch, epochs, train_loss, auc, ap)
+        logger.info(
+            "Epoch %d/%d  train_loss=%.4f  val_auc=%.4f  val_ap=%.4f  lr=%.2e",
+            epoch, epochs, train_loss, auc, ap, current_lr,
+        )
 
         if early_stop.step(auc, epoch):
-            logger.info("Early stopping triggered at epoch %d (no improvement for %d epochs). Best AUROC = %.4f", epoch, patience, best_auc)
+            logger.info(
+                "Early stopping at epoch %d (no AUROC improvement for %d epochs). Best=%.4f",
+                epoch, patience, best_auc,
+            )
             break
 
-    logger.info("Training complete. Best AUROC = %.4f", best_auc)
+    # Threshold calibration: find the operating point that maximises Youden's J.
+    threshold = calibrate_threshold(final_val_logits, final_val_y)
+    threshold_path = os.path.join(run_folder, "threshold.json")
+    with open(threshold_path, "w") as fh:
+        json.dump({"threshold": threshold, "method": "youden_j"}, fh, indent=2)
+
+    logger.info("Calibrated decision threshold: %.4f (saved to %s)", threshold, threshold_path)
+    logger.info("Training complete. Best AUROC=%.4f  Best AUPRC=%.4f", best_auc, best_ap)
     logger.info("Run folder: %s", run_folder)
 
 
@@ -302,7 +431,11 @@ if __name__ == "__main__":
     ap.add_argument("--run_name", type=str, default="train")
     ap.add_argument("--device", type=str, default=None)
     ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--patience", type=int, default=5, help="Early stopping patience (epochs without val_auc improvement)")
+    ap.add_argument("--patience", type=int, default=5)
+    ap.add_argument("--use_focal", action="store_true", help="Use Focal Loss instead of BCE")
+    ap.add_argument("--focal_gamma", type=float, default=2.0)
+    ap.add_argument("--warmup_epochs", type=int, default=3, help="Linear LR warmup epochs")
+    ap.add_argument("--clip_grad", type=float, default=1.0, help="Max gradient norm (0 to disable)")
     args = ap.parse_args()
 
     train(
@@ -316,4 +449,8 @@ if __name__ == "__main__":
         device=args.device,
         preferred_workers=args.workers,
         patience=args.patience,
+        use_focal=args.use_focal,
+        focal_gamma=args.focal_gamma,
+        warmup_epochs=args.warmup_epochs,
+        clip_grad=args.clip_grad,
     )

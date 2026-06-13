@@ -10,15 +10,30 @@ try:
 except ImportError:
     lmdb = None
 
+
+def _compute_deltas_fallback(mask: torch.Tensor) -> torch.Tensor:
+    """Fallback delta computation for .pt files that predate the preprocessing fix."""
+    T, F = mask.shape
+    deltas = torch.zeros(T, F)
+    for t in range(1, T):
+        deltas[t] = (deltas[t - 1] + 1.0) * (1.0 - mask[t])
+    return deltas
+
+
 class PatientDataset(Dataset):
     """
     Supports:
     - index file with 'x_paths' and optional 'y'
     - LMDB shards: index entries pointing to lmdb://<path>#<key>
-    - If model='grud' the dataset yields (X, mask, deltas, y)
+    - mode='transformer': yields (X, pad_mask, y)
+        pad_mask: (T,) bool tensor — True at front-padded (invalid) positions.
+    - mode='grud': yields (X_filled, mask, deltas, y)
+        Uses pre-computed mask/deltas stored by parallel_preprocess.py when available;
+        falls back to NaN-detection for older .pt files.
     """
+
     def __init__(self, index_path, mode='transformer'):
-        d = torch.load(index_path)
+        d = torch.load(index_path, weights_only=False)
         self.x_paths = d.get('x_paths', [])
         self.y_indexed = None
         if 'y' in d:
@@ -31,10 +46,9 @@ class PatientDataset(Dataset):
         return len(self.x_paths)
 
     def _load_pt(self, path):
-        return torch.load(path)
+        return torch.load(path, weights_only=False)
 
     def _load_lmdb(self, lmdb_spec):
-        # lmdb_spec: "lmdb://path/to/shard.lmdb#key"
         assert lmdb_spec.startswith("lmdb://")
         s = lmdb_spec[len("lmdb://"):]
         path, key = s.split("#", 1)
@@ -51,24 +65,35 @@ class PatientDataset(Dataset):
             data = self._load_lmdb(spec)
         else:
             data = self._load_pt(spec)
+
         X = data['X'].float()  # (T, F)
+        T = X.shape[0]
         y = float(data.get('y', 0))
         if self.y_indexed is not None:
             y = float(self.y_indexed[idx])
+
         if self.mode == 'transformer':
-            return X, torch.tensor(y, dtype=torch.float32)
+            # Build padding mask: True = ignore (front-padded zeros).
+            actual_len = int(data.get('actual_len', T))
+            pad_mask = torch.zeros(T, dtype=torch.bool)
+            if actual_len < T:
+                pad_mask[:T - actual_len] = True
+            return X, pad_mask, torch.tensor(y, dtype=torch.float32)
+
         elif self.mode == 'grud':
-            mask = (~torch.isnan(X)).float()
-            X_filled = X.clone()
-            X_filled[torch.isnan(X_filled)] = 0.0
-            # Deltas = time since last observation per feature.
-            # Assumes uniform hourly timestep spacing (ICULOS-derived index in preprocessing).
-            # At t=0 delta is 0; for each subsequent step, delta resets to 0 on observation
-            # and increments by 1 when the feature is missing.
-            T, F = X.shape
-            deltas = torch.zeros(T, F)
-            for t in range(1, T):
-                deltas[t] = (deltas[t - 1] + 1.0) * (1.0 - mask[t])
+            if 'mask' in data and 'deltas' in data:
+                # Fast path: pre-computed by preprocessing pipeline.
+                mask = data['mask'].float()
+                deltas = data['deltas'].float()
+                X_filled = X.clone()
+                X_filled[torch.isnan(X_filled)] = 0.0
+            else:
+                # Fallback for older .pt files: derive from NaN positions.
+                mask = (~torch.isnan(X)).float()
+                X_filled = X.clone()
+                X_filled[torch.isnan(X_filled)] = 0.0
+                deltas = _compute_deltas_fallback(mask)
             return X_filled, mask, deltas, torch.tensor(y, dtype=torch.float32)
+
         else:
             raise ValueError("Unknown dataset mode: " + self.mode)

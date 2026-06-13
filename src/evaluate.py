@@ -305,9 +305,10 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
     with torch.no_grad():
         for batch in loader:
             if model_name == "transformer":
-                Xb, yb = batch
+                Xb, pad_mask_b, yb = batch
                 Xb = Xb.to(device).float()
-                logits = model(Xb)
+                pad_mask_b = pad_mask_b.to(device)
+                logits = model(Xb, src_key_padding_mask=pad_mask_b)
             else:
                 Xb, Mb, Db, yb = batch
                 Xb, Mb, Db = Xb.to(device).float(), Mb.to(device).float(), Db.to(device).float()

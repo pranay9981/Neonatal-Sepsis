@@ -16,15 +16,33 @@ sys.path.insert(0, str(SRC_DIR))
 from train_local import train, EarlyStopping, safe_metrics, seed_everything
 
 
-def _write_synthetic_index(folder: Path, n: int = 30, seq_len: int = 48, n_features: int = 40) -> str:
-    """Write n synthetic patient .pt files and an index, balanced labels."""
+def _write_synthetic_index(
+    folder: Path,
+    n: int = 30,
+    seq_len: int = 48,
+    n_features: int = 40,
+) -> str:
+    """
+    Write n synthetic patient .pt files and an index with balanced labels.
+    Includes mask/deltas/actual_len so the dataset returns the new (X, pad_mask, y)
+    format for transformer mode without hitting the backward-compat fallback.
+    """
     folder.mkdir(parents=True, exist_ok=True)
     paths, labels = [], []
     for i in range(n):
         X = torch.randn(seq_len, n_features)
         y = i % 2
+        mask = torch.ones(seq_len, n_features)
+        deltas = torch.zeros(seq_len, n_features)
         p = folder / f"p{i:03d}.pt"
-        torch.save({"X": X, "y": y, "meta": {}}, p)
+        torch.save({
+            "X": X,
+            "y": y,
+            "mask": mask,
+            "deltas": deltas,
+            "actual_len": seq_len,
+            "meta": {},
+        }, p)
         paths.append(str(p))
         labels.append(y)
     idx_path = folder / "index.pt"
@@ -136,7 +154,6 @@ class TestTrainFunction:
         import csv
         with open(csvs[0]) as f:
             rows = list(csv.DictReader(f))
-        # Should have stopped well before 10 epochs (at most 2: epoch 1 sets best, epoch 2 triggers)
         assert len(rows) < 10, f"Expected early stopping before 10 epochs, ran {len(rows)}"
 
     def test_grud_model(self, tmp_path):
@@ -161,3 +178,43 @@ class TestTrainFunction:
         seed_everything(7)
         x2 = torch.randn(5)
         assert torch.allclose(x1, x2)
+
+    def test_focal_loss_runs(self, tmp_path):
+        """Training with --use_focal should complete without error."""
+        idx = _write_synthetic_index(tmp_path / "data", n=20)
+        train(
+            index_path=idx,
+            model_name="transformer",
+            epochs=2,
+            batch_size=8,
+            lr=1e-3,
+            seed=42,
+            run_name="test_focal",
+            checkpoint_root=str(tmp_path / "runs"),
+            patience=10,
+            use_focal=True,
+        )
+        checkpoints = list((tmp_path / "runs").glob("*/checkpoints/model_best.pt"))
+        assert len(checkpoints) == 1
+
+    def test_threshold_json_created(self, tmp_path):
+        """threshold.json should be written after training."""
+        idx = _write_synthetic_index(tmp_path / "data", n=20)
+        train(
+            index_path=idx,
+            model_name="transformer",
+            epochs=2,
+            batch_size=8,
+            lr=1e-3,
+            seed=42,
+            run_name="test_threshold",
+            checkpoint_root=str(tmp_path / "runs"),
+            patience=10,
+        )
+        threshold_files = list((tmp_path / "runs").glob("*/threshold.json"))
+        assert len(threshold_files) == 1
+        import json
+        with open(threshold_files[0]) as f:
+            data = json.load(f)
+        assert "threshold" in data
+        assert 0.0 <= data["threshold"] <= 1.0

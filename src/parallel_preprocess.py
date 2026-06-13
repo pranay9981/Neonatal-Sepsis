@@ -86,6 +86,19 @@ def ensure_unique_index(df):
     return df
 
 
+def _compute_deltas(mask_arr: np.ndarray) -> np.ndarray:
+    """
+    Per-feature time-since-last-observation.
+    mask_arr: (T, F) float32, 1=observed 0=missing.
+    Returns delta: (T, F) float32 in units of timesteps.
+    """
+    T, F = mask_arr.shape
+    delta = np.zeros((T, F), dtype=np.float32)
+    for t in range(1, T):
+        delta[t] = (delta[t - 1] + 1.0) * (1.0 - mask_arr[t])
+    return delta
+
+
 def process_file(fp, out_folder, seq_len=48, freq='h'):
     try:
         df = safe_read(fp)
@@ -102,24 +115,41 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
         present_features = [lmap[f.lower()] for f in DEFAULT_FEATURES if f.lower() in lmap]
     if not present_features:
         return (fp, False, "no_features")
-    X_df = df[present_features].apply(pd.to_numeric, errors='coerce')
-    X_df = X_df.ffill().bfill()
-    X_df = X_df.fillna(X_df.mean()).fillna(0.0)
+
+    X_df_raw = df[present_features].apply(pd.to_numeric, errors='coerce')
+
+    # Resample to hourly buckets — aggregate by mean, NaN where no data in that hour.
     try:
-        X_df = X_df.resample(freq).ffill().bfill()
+        X_df_resampled = X_df_raw.resample(freq).mean()
     except Exception:
-        start, end = X_df.index.min(), X_df.index.max()
+        start, end = X_df_raw.index.min(), X_df_raw.index.max()
         new_idx = pd.date_range(start=start, end=end, freq=freq)
-        X_df = X_df.reindex(new_idx).ffill().bfill().fillna(0.0)
-    if len(X_df) >= seq_len:
-        X_seq = X_df.iloc[-seq_len:].to_numpy(dtype=np.float32)
+        X_df_resampled = X_df_raw.reindex(new_idx)
+
+    # Compute mask and deltas BEFORE imputation so missingness signal is preserved.
+    mask_np = X_df_resampled.notna().values.astype(np.float32)   # (T_res, F)
+    delta_np = _compute_deltas(mask_np)                           # (T_res, F)
+
+    # Impute for the input tensor (used by both Transformer and GRU-D as the "filled" X).
+    col_mean = X_df_resampled.mean()
+    X_df = X_df_resampled.ffill().bfill().fillna(col_mean).fillna(0.0)
+
+    # Window to seq_len. Front-pad with zeros so padded positions are identifiable.
+    n_rows = len(X_df)
+    F = len(present_features)
+    if n_rows >= seq_len:
+        X_seq    = X_df.iloc[-seq_len:].to_numpy(dtype=np.float32)
+        mask_seq = mask_np[-seq_len:]
+        delta_seq = delta_np[-seq_len:]
+        actual_len = seq_len
     else:
-        pad_len = seq_len - len(X_df)
-        if len(X_df) > 0:
-            pad_arr = np.vstack([X_df.iloc[0].to_numpy(dtype=np.float32)] * pad_len)
-            X_seq = np.vstack([pad_arr, X_df.to_numpy(dtype=np.float32)])
-        else:
-            return (fp, False, "no_numeric_rows")
+        pad_len = seq_len - n_rows
+        actual_len = n_rows
+        X_seq    = np.vstack([np.zeros((pad_len, F), dtype=np.float32),
+                               X_df.to_numpy(dtype=np.float32)])
+        mask_seq  = np.vstack([np.zeros((pad_len, F), dtype=np.float32), mask_np])
+        delta_seq = np.vstack([np.zeros((pad_len, F), dtype=np.float32), delta_np])
+
     y = 0
     for cand in LABEL_CANDIDATES:
         for col in df.columns:
@@ -134,11 +164,19 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
                 break
         if y:
             break
+
     patient_id = os.path.splitext(os.path.basename(fp))[0]
     os.makedirs(out_folder, exist_ok=True)
     out_path = os.path.join(out_folder, f"{patient_id}.pt")
     torch.save(
-        {'X': torch.tensor(X_seq), 'y': int(y), 'meta': {'patient_id': patient_id, 'features': present_features}},
+        {
+            'X': torch.tensor(X_seq),
+            'mask': torch.tensor(mask_seq),
+            'deltas': torch.tensor(delta_seq),
+            'actual_len': actual_len,
+            'y': int(y),
+            'meta': {'patient_id': patient_id, 'features': present_features},
+        },
         out_path,
     )
     return (fp, True, out_path)

@@ -1,125 +1,108 @@
 # src/model_grud.py
 """
-GRU-D style model (simplified, robust).
-- Projects input features to hidden_size.
-- Projects masks to hidden_size so shapes match.
-- Projects deltas to a scalar per timestep then derives per-hidden gamma via a linear layer.
-This keeps shapes consistent and avoids runtime size errors on mixed feature/hidden dims.
+GRU-D: Recurrent Neural Networks for Multivariate Time Series with Missing Values.
+(Che et al., 2018 — https://www.nature.com/articles/s41598-018-24271-9)
+
+Faithful implementation of three key mechanisms:
+1. Per-feature input decay (γ_x): missing values decay toward the empirical mean,
+   not toward zero. The decay rate is feature-specific based on time-since-last-obs.
+2. Tracking last observed value (x_last): imputation uses the most recently
+   observed value as the starting point for decay, rather than always decaying from mean.
+3. Hidden-state decay (γ_h): the previous hidden state is decayed before the GRU
+   gates, capturing that stale context is less reliable.
+
+set_empirical_mean() should be called with the per-feature training mean (from
+scaler.json) before training begins. Defaults to zeros if not called.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class GRUDCell(nn.Module):
-    def __init__(self, hidden_size):
+
+class GRUD(nn.Module):
+    def __init__(self, n_features, hidden_size=128, dropout=0.1):
         super().__init__()
+        self.n_features = n_features
         self.hidden_size = hidden_size
-        # GRU-like gates working in hidden space
+
+        # Per-feature input decay: delta (F,) → gamma_x (F,)
+        self.W_gamma_x = nn.Linear(n_features, n_features, bias=True)
+
+        # Hidden-state decay: scalar mean-delta (1,) → gamma_h (H,)
+        self.W_gamma_h = nn.Linear(1, hidden_size, bias=True)
+
+        # Project imputed input to hidden space
+        self.input_proj = nn.Linear(n_features, hidden_size)
+
+        # Standard GRU gates operating in hidden space
         self.z_x = nn.Linear(hidden_size, hidden_size)
         self.z_h = nn.Linear(hidden_size, hidden_size, bias=False)
         self.r_x = nn.Linear(hidden_size, hidden_size)
         self.r_h = nn.Linear(hidden_size, hidden_size, bias=False)
         self.h_x = nn.Linear(hidden_size, hidden_size)
         self.h_h = nn.Linear(hidden_size, hidden_size, bias=False)
-        # decay from scalar delta to hidden gating (gamma)
-        self.decay = nn.Linear(1, hidden_size)
-
-    def forward(self, x_h, mask_h, delta_scalar, h):
-        """
-        x_h: (B, H)  - projected input at time t
-        mask_h: (B, H) - projected mask at time t
-        delta_scalar: (B, 1) - scalar delta (time since last observation) for timestep t
-        h: (B, H) - previous hidden
-        """
-        # compute gamma from delta_scalar -> (B, H)
-        gamma = torch.exp(-F.relu(self.decay(delta_scalar)))  # (B, H)
-        # apply simple decay to the input when missing: x_hat = mask*x + (1-mask)*(gamma * x_h)
-        x_hat = mask_h * x_h + (1.0 - mask_h) * (gamma * x_h)
-
-        z = torch.sigmoid(self.z_x(x_hat) + self.z_h(h))
-        r = torch.sigmoid(self.r_x(x_hat) + self.r_h(h))
-        h_tilde = torch.tanh(self.h_x(x_hat) + self.h_h(r * h))
-        h_new = (1 - z) * h + z * h_tilde
-        return h_new
-
-class GRUD(nn.Module):
-    def __init__(self, n_features, hidden_size=128, num_layers=1, dropout=0.1):
-        """
-        n_features: number of raw features (F)
-        hidden_size: GRU hidden dimension (H)
-        """
-        super().__init__()
-        self.n_features = n_features
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        # project raw input features -> hidden space
-        self.input_proj = nn.Linear(n_features, hidden_size)
-
-        # project mask (F) -> hidden space so mask shape matches projected input
-        self.mask_proj = nn.Linear(n_features, hidden_size)
-
-        # project deltas (F) -> scalar per timestep (we'll average across features)
-        # then decay layer in GRUDCell will map scalar -> hidden gamma
-        self.delta_proj = nn.Linear(n_features, 1)
-
-        # stack of GRUDCells (we keep a simple single-layer cell by default)
-        self.cells = nn.ModuleList([GRUDCell(hidden_size) for _ in range(num_layers)])
 
         self.dropout = nn.Dropout(dropout)
 
-        # classifier on final hidden
+        # Empirical per-feature mean — registered as a non-trainable buffer.
+        # Call set_empirical_mean() after loading the scaler.
+        self.register_buffer('x_mean', torch.zeros(n_features))
+
         self.classifier = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(64, 1)
+            nn.Linear(64, 1),
         )
+
+    def set_empirical_mean(self, x_mean: torch.Tensor):
+        """Load the training-set per-feature mean into the buffer."""
+        self.x_mean.copy_(x_mean.to(self.x_mean.device))
 
     def forward(self, x, mask, deltas):
         """
-        x: (B, T, F) - raw features (may have NaNs replaced by zeros by dataset)
-        mask: (B, T, F) - 1.0 if observed, 0.0 if missing
-        deltas: (B, T, F) or (B, T, 1) - time-since-last-observation (dataset provides)
+        x:      (B, T, F) imputed features (0 where missing)
+        mask:   (B, T, F) 1=observed, 0=missing
+        deltas: (B, T, F) time since last observation per feature (in timesteps)
         Returns logits: (B,)
         """
-        B, T, F = x.shape
+        B, T, _ = x.shape
         device = x.device
+        x_mean = self.x_mean.to(device)  # (n_features,)
 
-        # Project inputs to hidden space
-        x_h = self.input_proj(x)            # (B, T, H)
-        mask_h = self.mask_proj(mask.float())  # (B, T, H)
-
-        # Create timestep scalar delta: if deltas has shape (B,T,F) average across features -> (B,T,1)
-        if deltas is None:
-            delta_scalar = torch.zeros((B, T, 1), device=device)
-        else:
-            if deltas.dim() == 3 and deltas.shape[2] == F:
-                # learned projection: (B, T, F) -> (B, T, 1)
-                delta_scalar = self.delta_proj(deltas)
-            elif deltas.dim() == 3 and deltas.shape[2] == 1:
-                delta_scalar = deltas
-            elif deltas.dim() == 2:
-                delta_scalar = deltas.unsqueeze(-1)
-            else:
-                delta_scalar = torch.zeros((B, T, 1), device=device)
-
-        # initial hidden state
         h = torch.zeros(B, self.hidden_size, device=device)
 
-        # iterate over timesteps
+        # x_last tracks the most recently observed value per sample per feature.
+        # Initialised to the empirical mean, matching the GRU-D paper.
+        x_last = x_mean.unsqueeze(0).expand(B, -1).clone()  # (B, F)
+
         for t in range(T):
-            xt = x_h[:, t, :]            # (B, H)
-            mt = mask_h[:, t, :]         # (B, H)
-            dt = delta_scalar[:, t, :]   # (B, 1)
+            xt = x[:, t, :]       # (B, F)
+            mt = mask[:, t, :]    # (B, F)
+            dt = deltas[:, t, :]  # (B, F)
 
-            # pass through stacked cells (simple stack: feed output to next cell)
-            h_current = h
-            for i, cell in enumerate(self.cells):
-                h_current = cell(xt, mt, dt, h_current)
-            h = self.dropout(h_current)
+            # Per-feature input decay coefficient γ_x ∈ (0, 1]
+            gamma_x = torch.exp(-F.relu(self.W_gamma_x(dt)))  # (B, F)
 
-        logits = self.classifier(h).squeeze(-1)  # (B,)
-        return logits
+            # GRU-D imputation: x̂ = m⊙x + (1−m)⊙(γ_x⊙x_last + (1−γ_x)⊙x̄)
+            x_hat = mt * xt + (1.0 - mt) * (gamma_x * x_last + (1.0 - gamma_x) * x_mean)
+
+            # Advance x_last: use freshly observed value; otherwise keep previous.
+            x_last = mt * xt + (1.0 - mt) * x_last
+
+            # Scalar delta for hidden decay (mean across features)
+            delta_scalar = dt.mean(dim=-1, keepdim=True)  # (B, 1)
+            gamma_h = torch.exp(-F.relu(self.W_gamma_h(delta_scalar)))  # (B, H)
+            h_decayed = gamma_h * h  # hidden-state decay
+
+            # GRU update using decayed hidden state
+            x_h = self.input_proj(x_hat)  # (B, H)
+            z = torch.sigmoid(self.z_x(x_h) + self.z_h(h_decayed))
+            r = torch.sigmoid(self.r_x(x_h) + self.r_h(h_decayed))
+            h_tilde = torch.tanh(self.h_x(x_h) + self.h_h(r * h_decayed))
+            h = (1.0 - z) * h_decayed + z * h_tilde
+            h = self.dropout(h)
+
+        return self.classifier(h).squeeze(-1)  # (B,)
