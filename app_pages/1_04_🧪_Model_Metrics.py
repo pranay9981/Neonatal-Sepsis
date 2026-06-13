@@ -17,220 +17,307 @@ if str(SRC_DIR) not in sys.path:
 try:
     from config import EVAL_FEDERATED_JSON as _FED, EVAL_LOCAL_JSON as _LOC, PLOT_ROC_PATH as _ROC, PLOT_PRC_PATH as _PRC
     EVAL_FEDERATED_JSON = Path(_FED)
-    EVAL_LOCAL_JSON = Path(_LOC)
-    PLOT_ROC_PATH = Path(_ROC)
-    PLOT_PRC_PATH = Path(_PRC)
+    EVAL_LOCAL_JSON     = Path(_LOC)
+    PLOT_ROC_PATH       = Path(_ROC)
+    PLOT_PRC_PATH       = Path(_PRC)
 except Exception:
     EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
-    EVAL_LOCAL_JSON = Path("eval_results_local.json")
-    PLOT_ROC_PATH = Path("model_comparison_plot.png")
-    PLOT_PRC_PATH = Path("model_comparison_plot_prc.png")
+    EVAL_LOCAL_JSON     = Path("eval_results_local.json")
+    PLOT_ROC_PATH       = Path("model_comparison_plot.png")
+    PLOT_PRC_PATH       = Path("model_comparison_plot_prc.png")
 
-# Professional palette: blue for federated, coral for local (fallback if names differ)
-PALETTE = ["#0052CC", "#FF6F61"]  # deep blue, coral
-FONT_FAMILY = "Arial"
+COLORS = {"fed": "#1E3A5F", "loc": "#E53935"}
+
 
 @st.cache_data
-def load_eval_results(path: Path):
+def load_eval(path: Path):
     if not path.exists():
         return None
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return json.load(f)
     except Exception:
         return None
 
-def calculate_all_metrics(eval_data, threshold=0.5):
-    y_true = np.array(eval_data['y_true'])
-    y_prob = np.array(eval_data['y_prob'])
+
+def compute_metrics(data, threshold=0.5):
+    y_true = np.array(data["y_true"])
+    y_prob = np.array(data["y_prob"])
     y_pred = (y_prob > threshold).astype(int)
     return {
-        "Model": eval_data.get('model_name', 'Model').replace('_', ' ').title(),
-        "AUROC": eval_data.get('auroc', np.nan),
-        "AUPRC": eval_data.get('auprc', np.nan),
-        "Accuracy": accuracy_score(y_true, y_pred),
-        "F1-Score": f1_score(y_true, y_pred),
+        "Model":     data.get("model_name", "Model").replace("_", " ").title(),
+        "AUROC":     data.get("auroc",  np.nan),
+        "AUPRC":     data.get("auprc",  np.nan),
+        "Accuracy":  accuracy_score(y_true, y_pred),
+        "F1-Score":  f1_score(y_true, y_pred, zero_division=0),
         "Precision": precision_score(y_true, y_pred, zero_division=0),
-        "Recall": recall_score(y_true, y_pred, zero_division=0)
+        "Recall":    recall_score(y_true, y_pred, zero_division=0),
     }
 
-def plot_confusion_ax(ax, y_true, y_prob, title, threshold=0.5):
-    y_pred = (np.array(y_prob) > threshold).astype(int)
-    cm = confusion_matrix(y_true, y_pred)
-    labels = ['TN', 'FP', 'FN', 'TP']
-    counts = cm.flatten()
-    pct = [f"{v:.2%}" for v in counts / np.sum(counts)]
-    annot = np.asarray([f"{lab}\n{cnt}\n{p}" for lab, cnt, p in zip(labels, counts, pct)]).reshape(2, 2)
-    sns.heatmap(cm, annot=annot, fmt="", cmap="Blues", ax=ax, cbar=False)
-    ax.set_title(title)
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
 
-def build_color_map(model_names):
-    """
-    Build a color mapping for the model names using PALETTE.
-    If there are more than two models, palette will cycle.
-    """
-    colors = {}
-    for i, name in enumerate(model_names):
-        colors[name] = PALETTE[i % len(PALETTE)]
-    return colors
-
-def styled_bar_chart(df, metric, color_map):
-    """
-    Returns a Plotly bar chart styled professionally for the given metric.
-    df: dataframe with columns ['Model', metric]
-    color_map: dict {model_name: color}
-    """
-    # Assign color by model
-    df_plot = df.copy()
-    df_plot['color'] = df_plot['Model'].map(color_map)
-
+def _bar(df, metric, colors):
     fig = go.Figure()
-    for _, row in df_plot.iterrows():
+    for _, row in df.iterrows():
+        c = colors.get(
+            "fed" if "fed" in row["Model"].lower() else "loc",
+            "#888888"
+        )
         fig.add_trace(go.Bar(
-            x=[row['Model']],
-            y=[row[metric]],
-            name=row['Model'],
-            marker_color=row['color'],
+            x=[row["Model"]], y=[row[metric]],
+            name=row["Model"],
+            marker_color=c,
             text=[f"{row[metric]:.3f}"],
-            textposition='outside',
-            hovertemplate=f"<b>{row['Model']}</b><br>{metric}: {{y:.4f}}<extra></extra>"
+            textposition="outside",
         ))
-
     fig.update_layout(
-        title={'text': f"{metric} Comparison", 'x':0.01, 'xanchor':'left', 'font': {'size':18, 'family': FONT_FAMILY}},
-        xaxis=dict(title='', tickfont=dict(size=12)),
-        yaxis=dict(title=metric, tickfont=dict(size=12), gridcolor='rgba(0,0,0,0.05)'),
+        title={"text": metric, "font": {"size": 15}},
+        yaxis=dict(range=[0, min(1.15, df[metric].max() * 1.18)],
+                   gridcolor="rgba(0,0,0,0.05)"),
         showlegend=False,
-        margin=dict(l=40, r=20, t=60, b=40),
-        height=380,
-        font=dict(family=FONT_FAMILY)
+        height=300,
+        margin=dict(l=20, r=20, t=45, b=30),
+        font=dict(family="Inter, Segoe UI, sans-serif"),
+        plot_bgcolor="white",
     )
-    # Ensure y-axis starts at 0 for interpretability for metrics like Accuracy/F1/Recall
-    if metric in ['Accuracy', 'F1-Score', 'Precision', 'Recall', 'AUPRC', 'AUROC']:
-        fig.update_yaxes(range=[0, max(1.0, df[metric].max() * 1.05)])
     return fig
+
+
+def _confusion_ax(ax, y_true, y_prob, title, threshold=0.5, color="#1E3A5F"):
+    y_pred = (np.array(y_prob) > threshold).astype(int)
+    cm     = confusion_matrix(y_true, y_pred)
+    labels = ["TN", "FP", "FN", "TP"]
+    counts = cm.flatten()
+    total  = counts.sum()
+    annot  = np.asarray([
+        f"{lab}\n{cnt}\n({cnt/total:.1%})"
+        for lab, cnt in zip(labels, counts)
+    ]).reshape(2, 2)
+    cmap = sns.light_palette(color, as_cmap=True)
+    sns.heatmap(cm, annot=annot, fmt="", cmap=cmap, ax=ax, cbar=False,
+                linewidths=0.5, linecolor="#E2E8F0")
+    ax.set_title(title, fontsize=12, pad=10)
+    ax.set_xlabel("Predicted", fontsize=10)
+    ax.set_ylabel("Actual",    fontsize=10)
+    ax.set_xticklabels(["No Sepsis", "Sepsis"], fontsize=9)
+    ax.set_yticklabels(["No Sepsis", "Sepsis"], fontsize=9, rotation=0)
+
 
 class MetricsPage:
     @staticmethod
     def render():
-        st.title("🧪 Model Performance (Federated vs Local)")
-        st.markdown("Compare the Federated model against a Local model on the hold-out test set. Charts are styled for professional presentation.")
+        # ── Header ────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="background:linear-gradient(90deg,#1E3A5F 0%,#6A1B9A 100%);
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;">
+          <div style="font-size:1.7rem;font-weight:700;">&#129514; Model Performance</div>
+          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
+            Federated model vs Local baseline &#8212; head-to-head on the frozen held-out test set
+          </div>
+          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
+            All metrics computed on patients the model never saw during training or model selection.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        fed = load_eval_results(EVAL_FEDERATED_JSON)
-        loc = load_eval_results(EVAL_LOCAL_JSON)
+        fed = load_eval(EVAL_FEDERATED_JSON)
+        loc = load_eval(EVAL_LOCAL_JSON)
 
-        if fed is None or loc is None:
-            st.error("Evaluation JSON files not found. Expected files: 'eval_results_federated.json' and 'eval_results_local.json'.")
-            st.info("Run evaluation scripts to create these files (e.g., src/evaluate.py).")
+        if fed is None and loc is None:
+            st.markdown("""
+            <div style="background:#FFF3E0;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;
+                 padding:16px 18px;color:#E65100;">
+            <b>No evaluation results found.</b> Run the pipeline to generate them:<br><br>
+            <code>python src/evaluate.py --index data/splits/test_index.pt
+                  --ckpt server_out/global_best.pt --model transformer
+                  --out_file eval_results_federated.json</code>
+            </div>
+            """, unsafe_allow_html=True)
             return
 
-        metrics_fed = calculate_all_metrics(fed)
-        metrics_loc = calculate_all_metrics(loc)
-        df_metrics = pd.DataFrame([metrics_fed, metrics_loc])
+        available = {}
+        if fed is not None:
+            available["Federated"] = fed
+        if loc is not None:
+            available["Local"] = loc
 
-        # Normalize display names, order
-        df_metrics_plot = df_metrics.set_index('Model')
-        df_metrics_plot = df_metrics_plot[['AUROC','AUPRC','Accuracy','F1-Score','Precision','Recall']]
+        threshold = st.slider("Classification threshold (for Accuracy / F1 / Precision / Recall)",
+                              0.0, 1.0, 0.5, 0.01)
 
-        # Build color mapping using model names
-        model_names = df_metrics['Model'].tolist()
-        color_map = build_color_map(model_names)
+        metrics_list = [compute_metrics(d, threshold) for d in available.values()]
+        df_metrics   = pd.DataFrame(metrics_list)
 
-        # Tabs
-        tab1, tab2, tab3 = st.tabs(["📊 Metric Summary", "📈 ROC & PRC", "🔢 Confusion Matrices"])
+        # ── Winner callout ─────────────────────────────────────────────────
+        if len(metrics_list) == 2:
+            fed_auroc = metrics_list[0]["AUROC"]
+            loc_auroc = metrics_list[1]["AUROC"]
+            if not (np.isnan(fed_auroc) or np.isnan(loc_auroc)):
+                diff = fed_auroc - loc_auroc
+                if diff > 0:
+                    st.markdown(
+                        f'<div style="background:#E8F5E9;border-left:4px solid #4CAF50;'
+                        f'border-radius:0 8px 8px 0;padding:12px 18px;color:#1B5E20;">'
+                        f'<b>Federated model wins</b> by <b>+{diff:.3f} AUROC</b> '
+                        f'({fed_auroc:.3f} vs {loc_auroc:.3f}) — federated collaboration '
+                        f'across sites generalises better than a single-site model.</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif diff < 0:
+                    st.markdown(
+                        f'<div style="background:#FFF3E0;border-left:4px solid #FF9800;'
+                        f'border-radius:0 8px 8px 0;padding:12px 18px;color:#E65100;">'
+                        f'Local model leads by <b>{-diff:.3f} AUROC</b> at this point '
+                        f'({loc_auroc:.3f} vs {fed_auroc:.3f}). '
+                        f'More FL rounds may close the gap.</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Tabs ───────────────────────────────────────────────────────────
+        tab1, tab2, tab3 = st.tabs(["Summary & charts", "ROC & PRC curves", "Confusion matrices"])
 
         with tab1:
-            st.subheader("Metric Summary Table")
-            st.dataframe(df_metrics_plot.style.format("{:.3f}"), use_container_width=True)
+            # Metric explanation
+            with st.expander("What do these metrics mean?"):
+                st.markdown("""
+                | Metric | What it measures | When to prioritise |
+                |---|---|---|
+                | **AUROC** | Overall discrimination — can the model rank sepsis patients above healthy ones? | General model quality |
+                | **AUPRC** | Precision-Recall tradeoff on imbalanced data — more informative than AUROC when positives are rare | Rare-event detection (7–9% sepsis rate) |
+                | **Accuracy** | Overall fraction correct | Only meaningful when classes are balanced |
+                | **F1-Score** | Harmonic mean of precision and recall at the chosen threshold | Balanced tradeoff |
+                | **Precision** | Of all flagged patients, what fraction truly had sepsis? | Minimising false alarms |
+                | **Recall** | Of all true sepsis patients, what fraction were caught? | Minimising missed cases |
+                """)
 
-            st.markdown("### Key Metric Highlights")
-            c1, c2, c3 = st.columns(3)
-            best_auroc = df_metrics_plot['AUROC'].idxmax()
-            best_f1 = df_metrics_plot['F1-Score'].idxmax()
-            best_recall = df_metrics_plot['Recall'].idxmax()
-            c1.metric("Best AUROC", f"{df_metrics_plot['AUROC'].max():.3f}", best_auroc)
-            c2.metric("Best F1-Score", f"{df_metrics_plot['F1-Score'].max():.3f}", best_f1)
-            c3.metric("Best Recall", f"{df_metrics_plot['Recall'].max():.3f}", best_recall)
+            # Summary table
+            st.markdown("#### Metrics at a glance")
+            df_display = df_metrics.set_index("Model")[["AUROC","AUPRC","Accuracy","F1-Score","Precision","Recall"]]
+            st.dataframe(df_display.style.format("{:.3f}").background_gradient(
+                cmap="Blues", axis=0
+            ), use_container_width=True)
 
-            st.markdown("### Performance Bar Charts")
-            # Create a two-column layout with stacked charts on each side
-            left_col, right_col = st.columns(2)
-            with left_col:
-                st.plotly_chart(styled_bar_chart(df_metrics, "AUROC", color_map), use_container_width=True)
-                st.plotly_chart(styled_bar_chart(df_metrics, "F1-Score", color_map), use_container_width=True)
-                st.plotly_chart(styled_bar_chart(df_metrics, "Recall", color_map), use_container_width=True)
-            with right_col:
-                st.plotly_chart(styled_bar_chart(df_metrics, "AUPRC", color_map), use_container_width=True)
-                st.plotly_chart(styled_bar_chart(df_metrics, "Precision", color_map), use_container_width=True)
-                st.plotly_chart(styled_bar_chart(df_metrics, "Accuracy", color_map), use_container_width=True)
+            # Best metric callouts
+            st.markdown("#### Highlights")
+            h1, h2, h3 = st.columns(3)
+            best_auroc = df_display["AUROC"].idxmax()
+            best_f1    = df_display["F1-Score"].idxmax()
+            best_rec   = df_display["Recall"].idxmax()
+            h1.metric("Best AUROC",   f"{df_display['AUROC'].max():.3f}",   best_auroc)
+            h2.metric("Best F1",      f"{df_display['F1-Score'].max():.3f}", best_f1)
+            h3.metric("Best Recall",  f"{df_display['Recall'].max():.3f}",   best_rec)
 
-            st.markdown("### Normalized Metric Profile (Radar)")
-            # Prepare normalized dataframe for radar
-            df_norm = df_metrics_plot.copy()
+            # Bar charts
+            st.markdown("#### Side-by-side comparison")
+            metrics_to_plot = ["AUROC", "AUPRC", "F1-Score", "Recall", "Precision", "Accuracy"]
+            rows = [metrics_to_plot[:3], metrics_to_plot[3:]]
+            for row_metrics in rows:
+                cols = st.columns(len(row_metrics))
+                for col, metric in zip(cols, row_metrics):
+                    col.plotly_chart(_bar(df_metrics, metric, COLORS), use_container_width=True)
+
+            # Radar chart
+            st.markdown("#### Normalised metric profile")
+            st.markdown('<span style="font-size:0.85rem;color:#64748B;">Each axis normalised to [0,1] within the comparison. Shows relative strengths.</span>', unsafe_allow_html=True)
+            df_norm = df_display.copy()
             for col in df_norm.columns:
                 rng = df_norm[col].max() - df_norm[col].min()
-                if rng != 0:
-                    df_norm[col] = (df_norm[col] - df_norm[col].min()) / rng
-                else:
-                    df_norm[col] = 0.5
+                df_norm[col] = ((df_norm[col] - df_norm[col].min()) / rng) if rng != 0 else 0.5
             fig_radar = go.Figure()
-            for idx, row in df_norm.iterrows():
+            palette = [COLORS["fed"], COLORS["loc"]]
+            for i, (idx, row) in enumerate(df_norm.iterrows()):
                 fig_radar.add_trace(go.Scatterpolar(
                     r=row.values.tolist() + [row.values[0]],
                     theta=row.index.tolist() + [row.index[0]],
-                    fill='toself',
+                    fill="toself",
                     name=idx,
-                    line=dict(color=color_map.get(idx, "#888888"), width=2),
-                    marker=dict(size=6)
+                    line=dict(color=palette[i % len(palette)], width=2),
+                    marker=dict(size=6),
                 ))
             fig_radar.update_layout(
-                polar=dict(radialaxis=dict(visible=True, range=[0, 1], tickfont=dict(size=10))),
-                showlegend=True,
-                height=520,
-                margin=dict(t=50, b=20, l=20, r=20),
-                font=dict(family=FONT_FAMILY)
+                polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                showlegend=True, height=480,
+                margin=dict(t=40, b=20),
+                font=dict(family="Inter, Segoe UI, sans-serif"),
             )
             st.plotly_chart(fig_radar, use_container_width=True)
 
         with tab2:
-            st.subheader("ROC & Precision-Recall (PRC)")
+            st.markdown("#### ROC and Precision-Recall curves")
+            st.markdown(
+                '<span style="font-size:0.85rem;color:#64748B;">Generated by '
+                '<code>python src/plot_results.py</code>. '
+                'Confidence bands show 95% bootstrap intervals.</span>',
+                unsafe_allow_html=True,
+            )
             col1, col2 = st.columns(2)
             with col1:
                 if PLOT_ROC_PATH.exists():
-                    st.image(str(PLOT_ROC_PATH), caption="ROC Curve", use_container_width=True)
+                    st.image(str(PLOT_ROC_PATH), caption="ROC Curve — higher AUC = better discrimination",
+                             use_container_width=True)
                 else:
-                    st.warning(f"ROC plot not found at '{PLOT_ROC_PATH}'.")
+                    st.markdown(
+                        '<div style="background:#F8FAFC;border:1px dashed #CBD5E1;border-radius:8px;'
+                        'padding:32px;text-align:center;color:#64748B;">'
+                        'ROC plot not found.<br>Run: <code>python src/plot_results.py ...</code></div>',
+                        unsafe_allow_html=True,
+                    )
             with col2:
                 if PLOT_PRC_PATH.exists():
-                    st.image(str(PLOT_PRC_PATH), caption="PRC Curve", use_container_width=True)
+                    st.image(str(PLOT_PRC_PATH), caption="Precision-Recall Curve — more informative on imbalanced data",
+                             use_container_width=True)
                 else:
-                    st.warning(f"PRC plot not found at '{PLOT_PRC_PATH}'.")
+                    st.markdown(
+                        '<div style="background:#F8FAFC;border:1px dashed #CBD5E1;border-radius:8px;'
+                        'padding:32px;text-align:center;color:#64748B;">'
+                        'PRC plot not found.<br>Run: <code>python src/plot_results.py ...</code></div>',
+                        unsafe_allow_html=True,
+                    )
 
             st.markdown("""
-            **Interpretation tips (for reviewers):**
-            - **AUROC** shows discrimination ability (1.0 is perfect).  
-            - **AUPRC** is more informative on imbalanced data — higher is better.  
-            - Compare where the Federated model curve lies relative to the Local model curve; separation with non-overlapping CI bands suggests statistical significance.
-            """)
+            <div style="background:#E3F2FD;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;
+                 padding:12px 18px;color:#0D47A1;margin-top:12px;">
+            <b>How to read these:</b>
+            AUROC close to 1.0 = model discriminates well.
+            AUPRC is critical here — with only 7–9% positive rate, a naive classifier gets AUPRC ~0.08.
+            A good sepsis model should exceed 0.40+ AUPRC.
+            Non-overlapping confidence bands between models indicate statistical significance.
+            </div>
+            """, unsafe_allow_html=True)
 
         with tab3:
-            st.subheader("Confusion Matrices (threshold = 0.5)")
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-            plot_confusion_ax(ax1, fed['y_true'], fed['y_prob'], title=f"Federated ({fed.get('model_name','Federated')})")
-            plot_confusion_ax(ax2, loc['y_true'], loc['y_prob'], title=f"Local ({loc.get('model_name','Local')})")
+            st.markdown("#### Confusion matrices")
+            st.markdown(
+                f'<span style="font-size:0.85rem;color:#64748B;">At threshold = {threshold:.2f}. '
+                f'Shows TN/FP/FN/TP counts and percentage of total test set.</span>',
+                unsafe_allow_html=True,
+            )
+
+            n_models = len(available)
+            fig, axes = plt.subplots(1, n_models, figsize=(7 * n_models, 6))
+            if n_models == 1:
+                axes = [axes]
+            colors_list = [COLORS["fed"], COLORS["loc"]]
+            for ax, (name, data), color in zip(axes, available.items(), colors_list):
+                _confusion_ax(ax, data["y_true"], data["y_prob"],
+                              title=f"{name} Model", threshold=threshold, color=color)
             plt.tight_layout()
             st.pyplot(fig)
 
+            st.markdown("""
+            <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;
+                 padding:12px 18px;margin-top:12px;color:#334155;">
+            <b>Reading the matrix:</b>
+            <b>TN</b> = correctly cleared (no alert, right) &nbsp;|&nbsp;
+            <b>FP</b> = false alarm (alert on healthy patient) &nbsp;|&nbsp;
+            <b>FN</b> = missed sepsis (most dangerous) &nbsp;|&nbsp;
+            <b>TP</b> = caught sepsis (the goal)
+            </div>
+            """, unsafe_allow_html=True)
+
             def _summary(d):
                 return {k: v for k, v in d.items() if k not in ("y_true", "y_prob")}
-
-            with st.expander("Evaluation metadata (for auditing)"):
-                col_f, col_l = st.columns(2)
-                with col_f:
-                    st.markdown("**Federated**")
-                    st.json(_summary(fed))
-                with col_l:
-                    st.markdown("**Local**")
-                    st.json(_summary(loc))
+            with st.expander("Raw evaluation metadata (for auditors)"):
+                for name, data in available.items():
+                    st.markdown(f"**{name}**")
+                    st.json(_summary(data))

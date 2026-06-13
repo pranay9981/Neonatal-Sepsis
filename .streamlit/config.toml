@@ -6,4 +6,4 @@ secondaryBackgroundColor = "#F0F4F8"
 textColor = "#1E293B"
 
 [server]
-fileWatcherType = "poll"
+fileWatcherType = "none"

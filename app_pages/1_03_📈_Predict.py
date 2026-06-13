@@ -6,7 +6,7 @@ import torch
 import json
 from pathlib import Path
 import sys
-import os
+from typing import Optional
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 
@@ -26,14 +26,14 @@ try:
 except Exception:
     TimeSeriesTransformer = None
     _MODEL_PATH = "server_out/global_best.pt"
-    _EVAL_FED = "eval_results_federated.json"
+    _EVAL_FED   = "eval_results_federated.json"
     _SCALER_PATH = "data/processed/patients/scaler.json"
     N_FEATURES = 40
     SEQ_LEN = 48
 
-MODEL_PATH = Path(_MODEL_PATH)
+MODEL_PATH          = Path(_MODEL_PATH)
 EVAL_FEDERATED_JSON = Path(_EVAL_FED)
-SCALER_PATH = Path(_SCALER_PATH)
+SCALER_PATH         = Path(_SCALER_PATH)
 
 FEATURE_NAMES = [
     "HR", "O2Sat", "Temp", "SBP", "MAP", "DBP", "Resp", "EtCO2",
@@ -142,12 +142,11 @@ def load_scaler(path: str):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _apply_scaler(arr: np.ndarray, scaler: dict) -> np.ndarray:
     mean = np.array(scaler["mean"], dtype=np.float32)
-    std = np.array(scaler["std"], dtype=np.float32)
+    std  = np.array(scaler["std"],  dtype=np.float32)
     return (arr - mean) / (std + 1e-8)
 
 
 def validate_input(df: pd.DataFrame) -> list:
-    """Return list of warning strings for out-of-range or suspicious values."""
     warnings = []
     for fname in FEATURE_NAMES:
         if fname not in df.columns:
@@ -160,7 +159,8 @@ def validate_input(df: pd.DataFrame) -> list:
     return warnings
 
 
-def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN, n_features: int = N_FEATURES, scaler=None):
+def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN,
+                          n_features: int = N_FEATURES, scaler=None):
     messages = []
     try:
         df_numeric = df.apply(pd.to_numeric, errors="coerce")
@@ -169,19 +169,19 @@ def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN, n_features: i
 
     if df_numeric.isnull().values.any():
         n_missing = int(df_numeric.isnull().sum().sum())
-        messages.append(f"Found {n_missing} non-numeric/missing values — filling with 0.")
+        messages.append(f"Found {n_missing} missing/non-numeric values — filling with 0.")
         df_numeric = df_numeric.fillna(0)
 
     if df_numeric.shape[1] != n_features:
-        return None, [f"Invalid input: expected {n_features} columns, got {df_numeric.shape[1]}"]
+        return None, [f"Expected {n_features} columns, got {df_numeric.shape[1]}"]
 
     rows = df_numeric.shape[0]
     if rows > seq_len:
-        messages.append(f"Data has {rows} rows; truncating to last {seq_len}.")
+        messages.append(f"Input has {rows} rows — truncating to last {seq_len} (most recent hours).")
         df_proc = df_numeric.tail(seq_len)
     elif rows < seq_len:
         pad = seq_len - rows
-        messages.append(f"Data has {rows} rows; padding {pad} rows of zeros at the start.")
+        messages.append(f"Input has {rows} rows — zero-padding {pad} rows at the start.")
         pad_df = pd.DataFrame(np.zeros((pad, n_features)), columns=df_numeric.columns)
         df_proc = pd.concat([pad_df, df_numeric], ignore_index=True)
     else:
@@ -200,43 +200,28 @@ def safe_predict(model, tensor):
             out = model(tensor)
             if isinstance(out, (list, tuple)):
                 out = out[0]
-            out = out.detach().cpu().squeeze()
+            out   = out.detach().cpu().squeeze()
             logit = out.reshape(-1)[0] if out.numel() > 1 else out
             return float(torch.sigmoid(logit).item()), None
     except Exception as e:
         return None, str(e)
 
 
-def compute_feature_importance(model, tensor: torch.Tensor, scaler=None):
-    """
-    Compute per-feature importance using gradient saliency (|d_output/d_input|),
-    averaged across the time dimension. Falls back to SHAP GradientExplainer when available.
-    Returns array of shape (N_FEATURES,) or None on failure.
-    """
-    # Try SHAP first
+def compute_feature_importance(model, tensor: torch.Tensor, scaler=None) -> Optional[np.ndarray]:
     try:
         import shap
-
-        if scaler:
-            mean = np.array(scaler["mean"], dtype=np.float32)
-            std = np.array(scaler["std"], dtype=np.float32)
-            # Background: 20 samples drawn from standard normal (already normalised space)
-            bg_np = np.random.default_rng(42).standard_normal((20, SEQ_LEN, N_FEATURES)).astype(np.float32)
-        else:
-            bg_np = np.zeros((20, SEQ_LEN, N_FEATURES), dtype=np.float32)
-
+        bg_np = (
+            np.random.default_rng(42).standard_normal((20, SEQ_LEN, N_FEATURES)).astype(np.float32)
+            if scaler else np.zeros((20, SEQ_LEN, N_FEATURES), dtype=np.float32)
+        )
         bg_tensor = torch.from_numpy(bg_np)
-        model.train()  # GradientExplainer requires gradient mode
+        model.train()
         e = shap.GradientExplainer(model, bg_tensor)
-        shap_values = e.shap_values(tensor)  # (1, SEQ_LEN, N_FEATURES)
+        shap_values = e.shap_values(tensor)
         model.eval()
-        # Average absolute SHAP values over the time dimension
-        importance = np.abs(np.array(shap_values)).mean(axis=1).squeeze()
-        return importance
+        return np.abs(np.array(shap_values)).mean(axis=1).squeeze()
     except Exception:
         pass
-
-    # Fallback: gradient saliency
     try:
         x = tensor.clone().float().requires_grad_(True)
         model.eval()
@@ -245,53 +230,54 @@ def compute_feature_importance(model, tensor: torch.Tensor, scaler=None):
             if isinstance(out, (list, tuple)):
                 out = out[0]
             out.sum().backward()
-        saliency = x.grad.abs().mean(dim=1).squeeze(0)  # (N_FEATURES,)
-        return saliency.detach().numpy()
+        return x.grad.abs().mean(dim=1).squeeze(0).detach().numpy()
     except Exception:
         return None
 
 
-def plot_prediction_histogram(probs_neg, probs_pos, prediction_score):
+def plot_prediction_histogram(probs_neg, probs_pos, score):
     fig, ax = plt.subplots(figsize=(10, 4))
     if len(probs_neg) > 0:
-        ax.hist(probs_neg, bins=50, alpha=0.7, label="Actual Low-Risk (Test Set)", density=True)
+        ax.hist(probs_neg, bins=50, alpha=0.7, color="#2196F3", label="No Sepsis (test set)", density=True)
     if len(probs_pos) > 0:
-        ax.hist(probs_pos, bins=50, alpha=0.7, label="Actual High-Risk (Test Set)", density=True)
-    ax.axvline(prediction_score, color="red", linestyle="--", lw=3, label=f"Your Score ({prediction_score:.2f})")
-    ax.set_title("Prediction Score vs. Test Set Outcomes")
-    ax.set_xlabel("Predicted Risk Score (Probability)")
+        ax.hist(probs_pos, bins=50, alpha=0.7, color="#F44336", label="Sepsis (test set)", density=True)
+    ax.axvline(score, color="#FF6F00", linestyle="--", lw=3, label=f"This patient ({score:.2f})")
+    ax.set_title("Where this patient sits in the test-set distribution", fontsize=13)
+    ax.set_xlabel("Predicted Sepsis Probability")
     ax.set_ylabel("Density")
     ax.legend()
-    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.grid(True, linestyle="--", alpha=0.3)
+    fig.tight_layout()
     return fig
 
 
 def plot_threshold_sensitivity(y_true, y_prob, current_threshold):
-    """Plot precision, recall, and F1 across thresholds."""
     from sklearn.metrics import precision_score, recall_score, f1_score
-    thresholds = np.linspace(0.0, 1.0, 101)
+    thresholds   = np.linspace(0.0, 1.0, 101)
+    y_true_arr   = np.array(y_true)
+    y_prob_arr   = np.array(y_prob)
     precs, recs, f1s = [], [], []
-    y_true_arr = np.array(y_true)
-    y_prob_arr = np.array(y_prob)
     for t in thresholds:
         y_pred = (y_prob_arr >= t).astype(int)
         precs.append(precision_score(y_true_arr, y_pred, zero_division=0))
         recs.append(recall_score(y_true_arr, y_pred, zero_division=0))
         f1s.append(f1_score(y_true_arr, y_pred, zero_division=0))
-
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=thresholds, y=precs, name="Precision", line=dict(color="#0052CC")))
-    fig.add_trace(go.Scatter(x=thresholds, y=recs, name="Recall", line=dict(color="#FF6F61")))
-    fig.add_trace(go.Scatter(x=thresholds, y=f1s, name="F1-Score", line=dict(color="#2CA02C", dash="dash")))
-    fig.add_vline(x=current_threshold, line_color="red", line_dash="dot",
-                  annotation_text=f"Threshold = {current_threshold:.2f}", annotation_position="top right")
+    fig.add_trace(go.Scatter(x=thresholds, y=precs, name="Precision", line=dict(color="#1E3A5F", width=2)))
+    fig.add_trace(go.Scatter(x=thresholds, y=recs,  name="Recall",    line=dict(color="#F44336", width=2)))
+    fig.add_trace(go.Scatter(x=thresholds, y=f1s,   name="F1-Score",  line=dict(color="#2E7D32", width=2, dash="dash")))
+    fig.add_vline(x=current_threshold, line_color="#FF6F00", line_dash="dot",
+                  annotation_text=f"Current threshold = {current_threshold:.2f}",
+                  annotation_position="top right")
     fig.update_layout(
-        title="Threshold Sensitivity",
+        title="Precision / Recall / F1 across all thresholds",
         xaxis_title="Decision Threshold",
         yaxis_title="Score",
         yaxis=dict(range=[0, 1.05]),
-        height=350,
+        height=360,
         margin=dict(t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        font=dict(family="Inter, Segoe UI, sans-serif"),
     )
     return fig
 
@@ -332,41 +318,97 @@ def template_csv_random():
 class PredictPage:
     @staticmethod
     def render():
-        st.title("📈 Live Prediction (Neonatal Sepsis)")
-        st.info(
-            f"Provide {N_FEATURES} features per timestep. Data will be padded/truncated to {SEQ_LEN} timesteps."
-        )
+        # ── Header ────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="background:linear-gradient(90deg,#1E3A5F 0%,#2563EB 100%);
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;">
+          <div style="font-size:1.7rem;font-weight:700;">&#128202; Live Patient Prediction</div>
+          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
+            Provide 40 clinical features across up to 48 ICU hours &#8594; get a sepsis probability score
+          </div>
+          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
+            The model looks at trends over time, not just the most recent values.
+            More hours of data = better accuracy.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.download_button(
-            "Download Template CSV (random plausible values)",
+        # ── Model status ───────────────────────────────────────────────────
+        model, model_err = load_model(str(MODEL_PATH))
+        eval_data = load_eval_data(str(EVAL_FEDERATED_JSON))
+        scaler    = load_scaler(str(SCALER_PATH))
+
+        stat_col1, stat_col2, stat_col3 = st.columns(3)
+        _stat = lambda ok, yes, no: (
+            f'<div style="background:{"#E8F5E9" if ok else "#FDECEA"};border-radius:8px;'
+            f'padding:10px 14px;color:{"#1B5E20" if ok else "#B71C1C"};font-size:0.85rem;font-weight:600;">'
+            f'{"&#10003;" if ok else "&#10007;"} {yes if ok else no}</div>'
+        )
+        stat_col1.markdown(_stat(model is not None,    "Model loaded",           f"Model missing — {model_err}"), unsafe_allow_html=True)
+        stat_col2.markdown(_stat(scaler is not None,   "Scaler loaded",          "Scaler not found — predictions may be less accurate"), unsafe_allow_html=True)
+        stat_col3.markdown(_stat(eval_data is not None,"Eval data loaded",       "No eval data — some analysis tabs will be empty"), unsafe_allow_html=True)
+
+        if model is None:
+            st.markdown("""
+            <div style="background:#FFF3E0;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;
+                 padding:14px 18px;color:#E65100;margin-top:12px;">
+            <b>Model not available.</b> Train a model first, then run FL simulation:<br>
+            <code>python src/train_local.py --index data/splits/train_index.pt --model transformer</code><br>
+            <code>python scripts/run_fl_sim.py --client_indexes ...</code>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── How to use this page ───────────────────────────────────────────
+        with st.expander("How to use this page — input format guide"):
+            st.markdown(f"""
+            This page accepts patient data in **four ways** (choose below):
+
+            | Method | Best for |
+            |---|---|
+            | **Upload CSV** | You have a real patient file with {N_FEATURES} feature columns |
+            | **Paste CSV text** | Quick testing — paste comma-separated values directly |
+            | **Single row** | You only have the latest hour of measurements |
+            | **Fill manually** | Testing specific clinical scenarios — all 40 sliders |
+
+            **Data format:**
+            - Each row = one ICU hour
+            - Each column = one of the 40 features (HR, O2Sat, Temp, SBP, ...)
+            - Missing values: leave blank or use `NaN` — will be filled with 0
+            - The model uses the **last {SEQ_LEN} hours**; shorter data is zero-padded at the start
+            - Column order must match: `{", ".join(FEATURE_NAMES[:8])}, ...`
+
+            **Template:** Download a randomly-generated valid CSV below to see the exact format.
+            """)
+
+        col_dl, _ = st.columns([1, 3])
+        col_dl.download_button(
+            "Download example CSV template",
             data=template_csv_random(),
-            file_name="patient_template_random.csv",
+            file_name="patient_template_example.csv",
             mime="text/csv",
         )
 
-        model, model_err = load_model(str(MODEL_PATH))
-        eval_data = load_eval_data(str(EVAL_FEDERATED_JSON))
-        scaler = load_scaler(str(SCALER_PATH))
-        if scaler is None:
-            st.info("Feature scaler not found — run preprocessing first for best accuracy.")
-        if model is None:
-            st.warning(f"Model not available: {model_err or 'Model file missing.'}")
-            st.info("Generate 'server_out/global_best.pt' (train or run FL) to enable predictions.")
+        # ── Input mode ─────────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### Step 1 — Provide patient data")
+
+        mode = st.radio(
+            "Input method:",
+            ("Upload CSV file", "Paste CSV text", "Enter single row (40 values)", "Fill features manually"),
+            horizontal=True,
+        )
 
         if "df_input_temp" not in st.session_state:
             st.session_state.df_input_temp = None
 
-        st.subheader("Input Data")
-        mode = st.radio("Input method:", (
-            "Upload CSV file",
-            "Paste CSV text",
-            "Enter single row (40 values)",
-            "Fill features manually",
-        ))
-
-        # ── Upload CSV ──────────────────────────────────────────────────────────
+        # ── Upload CSV ──────────────────────────────────────────────────────
         if mode == "Upload CSV file":
-            uploaded = st.file_uploader("Upload patient CSV (header optional)", type=["csv"])
+            uploaded = st.file_uploader(
+                f"Upload patient CSV ({N_FEATURES} feature columns, one row per ICU hour)",
+                type=["csv"],
+            )
             if uploaded is not None:
                 try:
                     uploaded.seek(0)
@@ -379,15 +421,15 @@ class PredictPage:
                     if df_input.shape[1] == N_FEATURES and list(df_input.columns) != FEATURE_NAMES:
                         df_input.columns = FEATURE_NAMES
                     st.session_state.df_input_temp = df_input
-                    st.success("CSV loaded.")
+                    st.success(f"CSV loaded: {df_input.shape[0]} rows × {df_input.shape[1]} columns")
                 except Exception as e:
                     st.error(f"Failed to read CSV: {e}")
 
-        # ── Paste CSV ───────────────────────────────────────────────────────────
+        # ── Paste CSV ───────────────────────────────────────────────────────
         elif mode == "Paste CSV text":
-            text = st.text_area("Paste CSV text (one timestep per line)", height=200,
-                                placeholder="val1,val2,... (40 values per line)")
-            if st.button("Parse pasted CSV"):
+            st.markdown('<span style="font-size:0.85rem;color:#64748B;">One ICU hour per line, 40 comma-separated values per line</span>', unsafe_allow_html=True)
+            text = st.text_area("Paste CSV text", height=180, placeholder="140,98.5,36.8,65,45,40,40,35,...")
+            if st.button("Parse", type="primary"):
                 if not text.strip():
                     st.error("No text entered.")
                 else:
@@ -398,17 +440,19 @@ class PredictPage:
                         if df_parsed.shape[1] == N_FEATURES:
                             df_parsed.columns = FEATURE_NAMES
                         st.session_state.df_input_temp = df_parsed
-                        st.success("Parsed and stored.")
+                        st.success(f"Parsed: {df_parsed.shape[0]} rows")
 
-        # ── Single row ─────────────────────────────────────────────────────────
+        # ── Single row ──────────────────────────────────────────────────────
         elif mode == "Enter single row (40 values)":
-            single_text = st.text_area(f"Enter {N_FEATURES} comma-separated values", height=100,
-                                       placeholder="v1, v2, ..., v40")
-            tile_option = st.radio("Expand to 48 timesteps by:", (
-                "Tile the same row across all timesteps",
-                "Use this as the most recent timestep, pad previous with zeros",
-            ))
-            if st.button("Parse single row"):
+            st.markdown('<span style="font-size:0.85rem;color:#64748B;">Enter the most recent hour\'s measurements as 40 comma-separated numbers</span>', unsafe_allow_html=True)
+            single_text = st.text_area(f"40 comma-separated values", height=80,
+                                       placeholder="140, 98.5, 36.8, 65, 45, 40, 40, 35, ...")
+            tile_option = st.radio(
+                "How to expand to 48 timesteps:",
+                ("Tile this row across all 48 hours", "Use as latest hour, zero-pad the earlier hours"),
+                help="The model needs 48 timesteps. Tiling repeats your single row — zero-pad is more realistic.",
+            )
+            if st.button("Use this row", type="primary"):
                 parts = [p.strip() for p in single_text.strip().split(",") if p.strip()]
                 if len(parts) != N_FEATURES:
                     st.error(f"Expected {N_FEATURES} values, got {len(parts)}.")
@@ -421,58 +465,55 @@ class PredictPage:
                             arr = np.zeros((SEQ_LEN, N_FEATURES))
                             arr[-1, :] = row_vals
                         st.session_state.df_input_temp = pd.DataFrame(arr, columns=FEATURE_NAMES)
-                        st.success("Stored.")
+                        st.success("Stored — scroll down to run prediction.")
                     except Exception as e:
                         st.error(f"Parse error: {e}")
 
-        # ── Manual fill ────────────────────────────────────────────────────────
+        # ── Manual fill ─────────────────────────────────────────────────────
         else:
-            st.markdown("Fill each feature below (prefilled with plausible defaults).")
+            st.markdown('<span style="font-size:0.85rem;color:#64748B;">Set each feature value below (pre-filled with typical neonatal ICU defaults)</span>', unsafe_allow_html=True)
             cols = st.columns(4)
             manual_vals = {}
             per_col = int(np.ceil(len(FEATURE_NAMES) / 4))
             for col_idx, col in enumerate(cols):
-                start = col_idx * per_col
-                for fname in FEATURE_NAMES[start: start + per_col]:
+                for fname in FEATURE_NAMES[col_idx * per_col: (col_idx + 1) * per_col]:
                     default, vmin, vmax, step = FEATURE_SPEC.get(fname, (0.0, -1e6, 1e6, 0.1))
                     manual_vals[fname] = col.number_input(
                         label=fname, value=float(default),
-                        min_value=float(vmin), max_value=float(vmax),
-                        step=float(step),
+                        min_value=float(vmin), max_value=float(vmax), step=float(step),
                         format="%.3f" if step < 1 else "%.1f",
                         key=f"manual_{fname}",
                     )
-            manual_tile = st.radio("Expand to 48 timesteps by:", (
-                "Tile the same row across all timesteps",
-                "Use this as the most recent timestep, pad previous with zeros",
-            ), key="manual_tile")
-            if st.button("Use manual inputs"):
+            manual_tile = st.radio(
+                "Expand to 48 timesteps:",
+                ("Tile across all 48 hours", "Use as latest hour, zero-pad earlier hours"),
+                key="manual_tile",
+            )
+            if st.button("Use these values", type="primary"):
                 parsed = [manual_vals[f] for f in FEATURE_NAMES]
-                if manual_tile.startswith("Tile"):
-                    arr = np.tile(np.array(parsed)[None, :], (SEQ_LEN, 1))
-                else:
-                    arr = np.zeros((SEQ_LEN, N_FEATURES))
-                    arr[-1, :] = parsed
+                arr = (np.tile(np.array(parsed)[None, :], (SEQ_LEN, 1))
+                       if manual_tile.startswith("Tile")
+                       else np.vstack([np.zeros((SEQ_LEN - 1, N_FEATURES)),
+                                       np.array(parsed)[None, :]]))
                 st.session_state.df_input_temp = pd.DataFrame(arr, columns=FEATURE_NAMES)
-                st.success("Stored.")
+                st.success("Stored — scroll down to run prediction.")
 
-        # ── If we have input ────────────────────────────────────────────────────
+        # ── Preview + run ───────────────────────────────────────────────────
         if st.session_state.df_input_temp is not None:
             st.markdown("---")
-            st.subheader("Preview (first 5 rows)")
-            try:
-                df_preview = st.session_state.df_input_temp.copy()
-                if df_preview.shape[1] == N_FEATURES and list(df_preview.columns) != FEATURE_NAMES:
-                    df_preview.columns = FEATURE_NAMES
-                df_preview = df_preview.apply(pd.to_numeric, errors="coerce")
-            except Exception:
-                df_preview = st.session_state.df_input_temp
-            st.dataframe(df_preview.head())
+            st.markdown("### Step 2 — Review and run")
 
-            # Input validation warnings
+            df_preview = st.session_state.df_input_temp.copy()
+            if df_preview.shape[1] == N_FEATURES and list(df_preview.columns) != FEATURE_NAMES:
+                df_preview.columns = FEATURE_NAMES
+            df_preview = df_preview.apply(pd.to_numeric, errors="coerce")
+
+            with st.expander(f"Data preview ({df_preview.shape[0]} rows × {df_preview.shape[1]} columns)"):
+                st.dataframe(df_preview, use_container_width=True)
+
             range_warnings = validate_input(df_preview)
             if range_warnings:
-                with st.expander(f"⚠️ {len(range_warnings)} out-of-range value(s) detected — expand to review"):
+                with st.expander(f"⚠️ {len(range_warnings)} out-of-range value(s) — click to review"):
                     for w in range_warnings:
                         st.warning(w)
 
@@ -481,106 +522,177 @@ class PredictPage:
                 st.info(m)
 
             if tensor is None:
-                st.error("Preprocessing failed. Fix input and try again.")
-            else:
-                threshold = st.slider("Decision threshold", 0.0, 1.0, 0.5, 0.01)
-                if st.button("▶️ Run Prediction"):
-                    if model is None:
-                        st.error("Model not available.")
-                        return
-                    with st.spinner("Running model ..."):
-                        prob, err = safe_predict(model, tensor)
-                    if err:
-                        st.error(f"Prediction error: {err}")
-                        return
+                st.error("Preprocessing failed. Fix the input and try again.")
+                return
 
-                    # ── Result ──────────────────────────────────────────────────
-                    st.subheader("Prediction Result")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        fig_gauge = go.Figure(go.Indicator(
-                            mode="gauge+number",
-                            value=prob * 100,
-                            title={"text": "Sepsis Risk (%)", "font": {"size": 20}},
-                            gauge={
-                                "axis": {"range": [0, 100]},
-                                "bar": {"color": "darkblue"},
-                                "steps": [
-                                    {"range": [0, 25], "color": "rgba(44,160,44,0.7)"},
-                                    {"range": [25, 50], "color": "rgba(255,127,14,0.7)"},
-                                    {"range": [50, 100], "color": "rgba(214,39,40,0.7)"},
-                                ],
-                                "threshold": {"line": {"color": "red", "width": 4}, "value": threshold * 100},
+            c_thresh, c_run = st.columns([3, 1])
+            threshold = c_thresh.slider("Decision threshold", 0.0, 1.0, 0.5, 0.01,
+                                         help="Probability above this → HIGH RISK alert")
+            run_clicked = c_run.button("Run prediction", type="primary", use_container_width=True)
+
+            if run_clicked:
+                if model is None:
+                    st.error("Model not available — train or run FL first.")
+                    return
+                with st.spinner("Running model inference..."):
+                    prob, err = safe_predict(model, tensor)
+                if err:
+                    st.error(f"Prediction error: {err}")
+                    return
+
+                # ── Result banner ───────────────────────────────────────────
+                st.markdown("---")
+                st.markdown("### Result")
+
+                risk_pct = prob * 100
+                if prob > threshold:
+                    banner_bg, banner_border, banner_color = "#FDECEA", "#F44336", "#B71C1C"
+                    risk_label = "HIGH RISK"
+                    risk_icon  = "&#9888;"
+                    advice = (
+                        "Immediate clinical evaluation recommended. "
+                        "Consider blood cultures, CBC, CRP/PCT, and early antibiotic coverage "
+                        "per local protocol. Increase monitoring frequency."
+                    )
+                elif prob > threshold * 0.6:
+                    banner_bg, banner_border, banner_color = "#FFF8E1", "#FF9800", "#E65100"
+                    risk_label = "MODERATE RISK"
+                    risk_icon  = "&#8505;"
+                    advice = (
+                        "Elevated vigilance advised. "
+                        "Consider repeat assessment in 2–4 hours. Low threshold for labs "
+                        "or escalation if clinical picture deteriorates."
+                    )
+                else:
+                    banner_bg, banner_border, banner_color = "#E8F5E9", "#4CAF50", "#1B5E20"
+                    risk_label = "LOW RISK"
+                    risk_icon  = "&#10003;"
+                    advice = "Continue standard monitoring. Re-assess if clinical condition changes."
+
+                st.markdown(
+                    f'<div style="background:{banner_bg};border-left:6px solid {banner_border};'
+                    f'border-radius:0 10px 10px 0;padding:16px 20px;margin:12px 0;">'
+                    f'<span style="font-size:1.3rem;font-weight:700;color:{banner_color};">'
+                    f'{risk_icon} {risk_label} — {risk_pct:.1f}%</span><br>'
+                    f'<span style="font-size:0.9rem;color:{banner_color};opacity:0.9;margin-top:4px;display:block;">'
+                    f'{advice}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+                # ── Gauge + score breakdown ─────────────────────────────────
+                col_gauge, col_info = st.columns([1, 1])
+                with col_gauge:
+                    fig_gauge = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=risk_pct,
+                        number={"suffix": "%", "font": {"size": 32, "color": "#1E3A5F"}},
+                        title={"text": "Sepsis Risk Score", "font": {"size": 16, "color": "#64748B"}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickfont": {"size": 11}},
+                            "bar":  {"color": banner_border, "thickness": 0.25},
+                            "steps": [
+                                {"range": [0,  30], "color": "#E8F5E9"},
+                                {"range": [30, 60], "color": "#FFF8E1"},
+                                {"range": [60, 100], "color": "#FDECEA"},
+                            ],
+                            "threshold": {
+                                "line": {"color": "#1E3A5F", "width": 3},
+                                "value": threshold * 100,
                             },
+                        },
+                    ))
+                    fig_gauge.update_layout(height=280, margin=dict(t=40, b=10, l=20, r=20))
+                    st.plotly_chart(fig_gauge, use_container_width=True)
+
+                with col_info:
+                    st.markdown(
+                        '<div style="font-size:0.8rem;font-weight:600;color:#64748B;'
+                        'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">'
+                        'Score breakdown</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for label, val in [
+                        ("Raw probability", f"{prob:.4f}"),
+                        ("As percentage",   f"{risk_pct:.1f}%"),
+                        ("Threshold",        f"{threshold:.2f}"),
+                        ("Decision",         risk_label),
+                    ]:
+                        st.markdown(
+                            f'<div style="background:#F8FAFC;border:1px solid #E2E8F0;'
+                            f'border-radius:6px;padding:8px 12px;margin:4px 0;'
+                            f'display:flex;justify-content:space-between;">'
+                            f'<span style="color:#64748B;font-size:0.85rem;">{label}</span>'
+                            f'<span style="font-weight:600;color:#1E3A5F;font-size:0.85rem;">{val}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                # ── Analysis tabs ───────────────────────────────────────────
+                st.markdown("---")
+                tab1, tab2, tab3 = st.tabs([
+                    "Distribution comparison",
+                    "Feature importance",
+                    "Threshold sensitivity",
+                ])
+
+                with tab1:
+                    st.markdown("**How this patient compares to the test set**")
+                    st.markdown(
+                        '<span style="font-size:0.85rem;color:#64748B;">Blue = no-sepsis patients, '
+                        'Red = sepsis patients, Orange line = this patient\'s score</span>',
+                        unsafe_allow_html=True,
+                    )
+                    if eval_data:
+                        arr_probs = np.array(eval_data["y_prob"])
+                        arr_true  = np.array(eval_data["y_true"])
+                        st.pyplot(plot_prediction_histogram(
+                            arr_probs[arr_true == 0], arr_probs[arr_true == 1], prob
                         ))
-                        fig_gauge.update_layout(height=300, margin=dict(t=30, b=10))
-                        st.plotly_chart(fig_gauge, use_container_width=True)
+                    else:
+                        st.info("Run evaluation first to enable this chart: `python src/evaluate.py ...`")
 
-                    with col2:
-                        if prob > threshold:
-                            st.error("HIGH RISK: Sepsis likely.", icon="⚠️")
-                            st.markdown("""
-                            **Clinical Recommendations:**
-                            - Immediate clinical evaluation required.
-                            - Consider blood cultures and early antibiotics per local protocol.
-                            - Monitor vitals and inflammatory markers (CRP, PCT).
-                            """)
-                        elif prob > threshold * 0.5:
-                            st.warning("Moderate Risk: Increased vigilance suggested.", icon="ℹ️")
-                            st.markdown("""
-                            **Recommendations:**
-                            - Increase monitoring frequency.
-                            - Low threshold for labs or escalation.
-                            """)
-                        else:
-                            st.success("Low Risk: Continue routine monitoring.", icon="✅")
-                            st.markdown("Continue standard monitoring and follow hospital protocols.")
+                with tab2:
+                    st.markdown("**Which features most influenced this prediction**")
+                    st.markdown(
+                        '<span style="font-size:0.85rem;color:#64748B;">Computed via gradient saliency '
+                        '(|d_output/d_input| averaged over timesteps). Higher = more influence.</span>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.spinner("Computing feature importance..."):
+                        importance = compute_feature_importance(model, tensor, scaler)
+                    if importance is not None:
+                        top_n   = 15
+                        top_idx = np.argsort(importance)[::-1][:top_n]
+                        top_names = [FEATURE_NAMES[i] for i in top_idx]
+                        top_vals  = importance[top_idx] / (importance[top_idx].max() + 1e-8)
+                        fig_imp = go.Figure(go.Bar(
+                            x=top_vals[::-1], y=top_names[::-1],
+                            orientation="h",
+                            marker_color=[
+                                f"rgba(30,58,95,{0.4 + 0.6 * v})" for v in top_vals[::-1]
+                            ],
+                        ))
+                        fig_imp.update_layout(
+                            title=f"Top {top_n} most influential features",
+                            xaxis_title="Normalised importance",
+                            height=420, margin=dict(l=20, r=20, t=50, b=40),
+                            font=dict(family="Inter, Segoe UI, sans-serif"),
+                        )
+                        st.plotly_chart(fig_imp, use_container_width=True)
+                    else:
+                        st.warning("Feature importance could not be computed for this input.")
 
-                    # ── Analysis tabs ───────────────────────────────────────────
-                    tab1, tab2, tab3 = st.tabs(["📊 vs Test Set", "🔬 Feature Importance (SHAP)", "📉 Threshold Sensitivity"])
-
-                    with tab1:
-                        if eval_data:
-                            arr_probs = np.array(eval_data["y_prob"])
-                            arr_true = np.array(eval_data["y_true"])
-                            st.pyplot(plot_prediction_histogram(
-                                arr_probs[arr_true == 0], arr_probs[arr_true == 1], prob
-                            ))
-                        else:
-                            st.info("Evaluation file not found — run evaluation to display histogram.")
-
-                    with tab2:
-                        with st.spinner("Computing feature importance ..."):
-                            importance = compute_feature_importance(model, tensor, scaler)
-                        if importance is not None:
-                            top_n = 15
-                            top_idx = np.argsort(importance)[::-1][:top_n]
-                            top_names = [FEATURE_NAMES[i] for i in top_idx]
-                            top_vals = importance[top_idx]
-                            top_vals_norm = top_vals / (top_vals.max() + 1e-8)
-                            fig_imp = go.Figure(go.Bar(
-                                x=top_vals_norm[::-1],
-                                y=top_names[::-1],
-                                orientation="h",
-                                marker_color="steelblue",
-                            ))
-                            fig_imp.update_layout(
-                                title=f"Top {top_n} Most Influential Features",
-                                xaxis_title="Normalised Importance",
-                                height=420,
-                                margin=dict(l=20, r=20, t=50, b=40),
-                            )
-                            st.plotly_chart(fig_imp, use_container_width=True)
-                            st.caption("Importance = |gradient| averaged over timesteps. Higher = more influence on prediction.")
-                        else:
-                            st.warning("Feature importance could not be computed for this input.")
-
-                    with tab3:
-                        if eval_data:
-                            st.plotly_chart(
-                                plot_threshold_sensitivity(eval_data["y_true"], eval_data["y_prob"], threshold),
-                                use_container_width=True,
-                            )
-                            st.caption("Based on the held-out test set. Adjust the threshold slider above to see how it affects precision and recall.")
-                        else:
-                            st.info("Evaluation file not found — run evaluation to display threshold sensitivity.")
+                with tab3:
+                    st.markdown("**How precision and recall change across thresholds**")
+                    st.markdown(
+                        '<span style="font-size:0.85rem;color:#64748B;">Based on the frozen test set. '
+                        'Use this to choose a threshold that balances catching sepsis vs false alarms.</span>',
+                        unsafe_allow_html=True,
+                    )
+                    if eval_data:
+                        st.plotly_chart(
+                            plot_threshold_sensitivity(eval_data["y_true"], eval_data["y_prob"], threshold),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.info("Run evaluation first to enable this chart.")
