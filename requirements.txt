@@ -20,4 +20,6 @@ plotly>=5.15.0
 mlflow>=2.12.0
 optuna>=3.6.0
 prometheus-client>=0.20.0
+pytest>=7.0.0
+pytest-cov>=4.0.0
 # opacus>=1.4.0  # optional: differential privacy — comment in if needed
