@@ -26,7 +26,6 @@ Research codebase for early sepsis detection in ICU patients using clinical time
 - [Docker](#docker)
 - [Running Tests](#running-tests)
 - [Configuration](#configuration)
-- [Contact](#contact)
 
 ---
 
@@ -516,9 +515,3 @@ federated:
   mu: 0.01           # FedProx proximal term (0 = plain FedAvg)
 ```
 
----
-
-## Contact
-
-- Maintainer: [`pranay9981`](https://github.com/pranay9981)
-- Collaborators: [`NinadAmane`](https://github.com/NinadAmane), [`Rakshak05`](https://github.com/Rakshak05)
