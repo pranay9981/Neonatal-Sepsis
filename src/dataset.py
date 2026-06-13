@@ -2,9 +2,13 @@
 import torch
 from torch.utils.data import Dataset
 import os, glob
-import lmdb
 import pickle
 import numpy as np
+
+try:
+    import lmdb
+except ImportError:
+    lmdb = None
 
 class PatientDataset(Dataset):
     """

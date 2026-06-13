@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./server_out:/app/server_out
+      - ./runs:/app/runs
+      - ./eval_results_federated.json:/app/eval_results_federated.json
+      - ./eval_results_local.json:/app/eval_results_local.json
+      - ./model_comparison_plot.png:/app/model_comparison_plot.png
+      - ./model_comparison_plot_prc.png:/app/model_comparison_plot_prc.png
+    environment:
+      - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
+      - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json
+
+  api:
+    build: .
+    command: uvicorn src.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./server_out:/app/server_out
+    environment:
+      - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
+      - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json

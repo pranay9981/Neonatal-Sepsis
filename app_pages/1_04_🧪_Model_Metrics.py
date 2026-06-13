@@ -1,19 +1,30 @@
 # 1_04_🧪_Model_Metrics.py
-import streamlit as st
+import sys
 from pathlib import Path
+import streamlit as st
 import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
 
-EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
-EVAL_LOCAL_JSON = Path("eval_results_local.json")
-PLOT_ROC_PATH = Path("model_comparison_plot.png")
-PLOT_PRC_PATH = PLOT_ROC_PATH.with_name(PLOT_ROC_PATH.stem + "_prc" + PLOT_ROC_PATH.suffix)
+SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+try:
+    from config import EVAL_FEDERATED_JSON as _FED, EVAL_LOCAL_JSON as _LOC, PLOT_ROC_PATH as _ROC, PLOT_PRC_PATH as _PRC
+    EVAL_FEDERATED_JSON = Path(_FED)
+    EVAL_LOCAL_JSON = Path(_LOC)
+    PLOT_ROC_PATH = Path(_ROC)
+    PLOT_PRC_PATH = Path(_PRC)
+except Exception:
+    EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
+    EVAL_LOCAL_JSON = Path("eval_results_local.json")
+    PLOT_ROC_PATH = Path("model_comparison_plot.png")
+    PLOT_PRC_PATH = Path("model_comparison_plot_prc.png")
 
 # Professional palette: blue for federated, coral for local (fallback if names differ)
 PALETTE = ["#0052CC", "#FF6F61"]  # deep blue, coral

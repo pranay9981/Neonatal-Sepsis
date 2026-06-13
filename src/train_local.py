@@ -83,6 +83,27 @@ def build_model_from_sample(sample_X, model_name):
         raise ValueError("Unknown model: " + model_name)
 
 
+class EarlyStopping:
+    """Stop training when val_auc stops improving for `patience` consecutive epochs."""
+
+    def __init__(self, patience: int = 5):
+        self.patience = patience
+        self.best = -float("inf")
+        self.wait = 0
+        self.stopped_epoch = 0
+
+    def step(self, metric: float, epoch: int) -> bool:
+        if metric > self.best:
+            self.best = metric
+            self.wait = 0
+            return False
+        self.wait += 1
+        if self.wait >= self.patience:
+            self.stopped_epoch = epoch
+            return True
+        return False
+
+
 def stratified_train_val_split(ds: PatientDataset, val_ratio: float = 0.2, seed: int = 42):
     """
     Patient-level stratified split using labels stored in the index file.
@@ -120,6 +141,7 @@ def train(
     device: str | None = None,
     checkpoint_root: str | None = None,
     preferred_workers: int = 4,
+    patience: int = 5,
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -189,6 +211,7 @@ def train(
         fh.write("epoch,train_loss,val_auc,val_ap,lr\n")
 
     best_auc = 0.0
+    early_stop = EarlyStopping(patience=patience)
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -257,6 +280,10 @@ def train(
 
         logger.info("Epoch %d/%d  train_loss=%.4f  val_auc=%.4f  val_ap=%.4f", epoch, epochs, train_loss, auc, ap)
 
+        if early_stop.step(auc, epoch):
+            logger.info("Early stopping triggered at epoch %d (no improvement for %d epochs). Best AUROC = %.4f", epoch, patience, best_auc)
+            break
+
     logger.info("Training complete. Best AUROC = %.4f", best_auc)
     logger.info("Run folder: %s", run_folder)
 
@@ -275,6 +302,7 @@ if __name__ == "__main__":
     ap.add_argument("--run_name", type=str, default="train")
     ap.add_argument("--device", type=str, default=None)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--patience", type=int, default=5, help="Early stopping patience (epochs without val_auc improvement)")
     args = ap.parse_args()
 
     train(
@@ -287,4 +315,5 @@ if __name__ == "__main__":
         run_name=args.run_name,
         device=args.device,
         preferred_workers=args.workers,
+        patience=args.patience,
     )
