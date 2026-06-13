@@ -200,15 +200,25 @@ with st.sidebar:
     st.markdown("<div style='font-size:0.78rem; color:#9DB8D9; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:6px;'>SYSTEM STATUS</div>", unsafe_allow_html=True)
 
     def _badge(label, ok):
-        cls = "badge-ok" if ok else "badge-miss"
-        icon = "✓" if ok else "✗"
-        st.markdown(f"<span class='status-badge {cls}'>{icon} {label}</span>", unsafe_allow_html=True)
+        bg    = "#D4EDDA" if ok else "#F8D7DA"
+        color = "#155724" if ok else "#721C24"
+        icon  = "&#10003;" if ok else "&#10007;"
+        st.markdown(
+            f'<div style="display:inline-block;padding:4px 12px;border-radius:20px;'
+            f'background:{bg};color:{color};font-size:0.8rem;font-weight:600;'
+            f'margin:3px 0;width:100%;">{icon} {label}</div>',
+            unsafe_allow_html=True,
+        )
 
-    _badge("Model loaded", model_ok)
-    _badge("Fed eval results", fed_ok)
-    _badge("Local eval results", loc_ok)
+    _badge("Model checkpoint", model_ok)
+    _badge("Federated eval JSON", fed_ok)
+    _badge("Local eval JSON", loc_ok)
 
-    st.markdown("<div style='margin-top:24px; font-size:0.7rem; color:#6B8CAE;'>v2 · improvements/v2 branch</div>", unsafe_allow_html=True)
+    st.markdown(
+        '<div style="margin-top:20px;font-size:0.7rem;color:#6B8CAE;">'
+        'v2 &middot; improvements/v2</div>',
+        unsafe_allow_html=True,
+    )
 
 # ── Resolve page ───────────────────────────────────────────────────────────────
 selected_label, selected_file, selected_class = None, None, None
