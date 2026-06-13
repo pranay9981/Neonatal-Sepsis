@@ -16,3 +16,11 @@ streamlit>=1.33.0
 shap>=0.44.0
 seaborn>=0.13.0
 plotly>=5.15.0
+# Phase 3: experiment tracking
+mlflow>=2.12.0
+# Phase 5: hyperparameter optimisation
+optuna>=3.6.0
+# Phase 6: differential privacy (optional — comment out if opacus install fails)
+# opacus>=1.4.0
+# Phase 8: API observability
+prometheus-client>=0.20.0

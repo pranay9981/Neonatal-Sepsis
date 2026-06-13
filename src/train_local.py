@@ -39,6 +39,13 @@ from logging_config import get_logger
 
 logger = get_logger(__name__)
 
+try:
+    import mlflow
+    import mlflow.pytorch
+    _MLFLOW_AVAILABLE = True
+except ImportError:
+    _MLFLOW_AVAILABLE = False
+
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
@@ -236,6 +243,10 @@ def train(
     focal_gamma: float = 2.0,
     warmup_epochs: int = 3,
     clip_grad: float = 1.0,
+    use_mlflow: bool = False,
+    mlflow_experiment: str = "neonatal_sepsis",
+    scaler_path: str | None = None,
+    augment: bool = False,
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -243,6 +254,16 @@ def train(
 
     if checkpoint_root is None:
         checkpoint_root = str(_PROJECT_ROOT / "runs")
+
+    # MLflow setup (optional)
+    mlflow_run = None
+    if use_mlflow:
+        if not _MLFLOW_AVAILABLE:
+            logger.warning("mlflow not installed; skipping experiment tracking. pip install mlflow")
+            use_mlflow = False
+        else:
+            mlflow.set_experiment(mlflow_experiment)
+            mlflow_run = mlflow.start_run(run_name=run_name)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_folder = os.path.join(checkpoint_root, f"{ts}__{run_name}")
@@ -263,12 +284,16 @@ def train(
         "focal_gamma": focal_gamma,
         "warmup_epochs": warmup_epochs,
         "clip_grad": clip_grad,
+        "scaler_path": scaler_path,
     }
     with open(os.path.join(run_folder, "run_info.json"), "w") as fh:
         json.dump(run_info, fh, indent=2)
 
+    if use_mlflow and mlflow_run:
+        mlflow.log_params(run_info)
+
     mode = "grud" if model_name == "grud" else "transformer"
-    ds = PatientDataset(index_path, mode=mode)
+    ds = PatientDataset(index_path, mode=mode, scaler_path=scaler_path, augment=augment)
     n = len(ds)
     if n < 2:
         raise ValueError(f"Need at least 2 patients, found {n}")
@@ -394,6 +419,12 @@ def train(
         with open(metrics_csv, "a") as fh:
             fh.write(f"{epoch},{train_loss:.6f},{auc:.6f},{ap:.6f},{current_lr:.8f}\n")
 
+        if use_mlflow and mlflow_run:
+            mlflow.log_metrics(
+                {"train_loss": train_loss, "val_auc": auc, "val_ap": ap, "lr": current_lr},
+                step=epoch,
+            )
+
         logger.info(
             "Epoch %d/%d  train_loss=%.4f  val_auc=%.4f  val_ap=%.4f  lr=%.2e",
             epoch, epochs, train_loss, auc, ap, current_lr,
@@ -416,6 +447,14 @@ def train(
     logger.info("Training complete. Best AUROC=%.4f  Best AUPRC=%.4f", best_auc, best_ap)
     logger.info("Run folder: %s", run_folder)
 
+    if use_mlflow and mlflow_run:
+        mlflow.log_metrics({"best_auroc": best_auc, "best_auprc": best_ap, "threshold": threshold})
+        try:
+            mlflow.pytorch.log_model(model, "model")
+        except Exception as e:
+            logger.warning("Could not log model to MLflow: %s", e)
+        mlflow.end_run()
+
 
 # -------------------------
 # CLI
@@ -436,6 +475,10 @@ if __name__ == "__main__":
     ap.add_argument("--focal_gamma", type=float, default=2.0)
     ap.add_argument("--warmup_epochs", type=int, default=3, help="Linear LR warmup epochs")
     ap.add_argument("--clip_grad", type=float, default=1.0, help="Max gradient norm (0 to disable)")
+    ap.add_argument("--use_mlflow", action="store_true", help="Enable MLflow experiment tracking")
+    ap.add_argument("--mlflow_experiment", type=str, default="neonatal_sepsis")
+    ap.add_argument("--scaler_path", type=str, default=None, help="Path to scaler.json for feature normalisation")
+    ap.add_argument("--augment", action="store_true", help="Enable on-the-fly Gaussian jitter augmentation")
     args = ap.parse_args()
 
     train(
@@ -453,4 +496,8 @@ if __name__ == "__main__":
         focal_gamma=args.focal_gamma,
         warmup_epochs=args.warmup_epochs,
         clip_grad=args.clip_grad,
+        use_mlflow=args.use_mlflow,
+        mlflow_experiment=args.mlflow_experiment,
+        scaler_path=args.scaler_path,
+        augment=args.augment,
     )
