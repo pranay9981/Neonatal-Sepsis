@@ -207,7 +207,7 @@ def safe_predict(model, tensor):
         return None, str(e)
 
 
-def compute_feature_importance(model, tensor: torch.Tensor, scaler=None) -> np.ndarray | None:
+def compute_feature_importance(model, tensor: torch.Tensor, scaler=None):
     """
     Compute per-feature importance using gradient saliency (|d_output/d_input|),
     averaged across the time dimension. Falls back to SHAP GradientExplainer when available.

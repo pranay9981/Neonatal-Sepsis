@@ -5,6 +5,7 @@ Shows run metadata, best metrics, and training curves; helps you pick the best c
 """
 import json
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,7 +14,7 @@ import streamlit as st
 RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"
 
 
-def _load_run(run_dir: Path) -> dict | None:
+def _load_run(run_dir: Path) -> Optional[dict]:
     info_path = run_dir / "run_info.json"
     metrics_path = run_dir / "metrics.csv"
     best_ckpt = run_dir / "checkpoints" / "model_best.pt"

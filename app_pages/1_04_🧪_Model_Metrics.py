@@ -223,8 +223,14 @@ class MetricsPage:
             plt.tight_layout()
             st.pyplot(fig)
 
-            with st.expander("Raw Evaluation JSONs (for auditing)"):
-                st.subheader("Federated Eval JSON")
-                st.json(fed)
-                st.subheader("Local Eval JSON")
-                st.json(loc)
+            def _summary(d):
+                return {k: v for k, v in d.items() if k not in ("y_true", "y_prob")}
+
+            with st.expander("Evaluation metadata (for auditing)"):
+                col_f, col_l = st.columns(2)
+                with col_f:
+                    st.markdown("**Federated**")
+                    st.json(_summary(fed))
+                with col_l:
+                    st.markdown("**Local**")
+                    st.json(_summary(loc))

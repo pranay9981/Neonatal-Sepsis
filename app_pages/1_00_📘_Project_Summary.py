@@ -1,112 +1,137 @@
 # 1_00_📘_Project_Summary.py
 import streamlit as st
 
+
 class ProjectSummaryPage:
     @staticmethod
     def render():
-        st.set_page_config(page_title="Project Summary — Neonatal Sepsis Detection", layout="wide")
-        st.title("📘 Neonatal Sepsis Detection Using Federated Learning")
-        st.markdown("---")
+        # Hero
+        st.markdown("""
+        <div class="main-header">
+          <h1>👶 Neonatal Sepsis Detection</h1>
+          <p>Federated Learning pipeline — privacy-first early warning from clinical time-series</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.markdown(
-            """
-            ### Executive summary
-            Neonatal sepsis is an acute, high-risk condition where early recognition materially improves outcomes. Clinical
-            data are noisy, sparsely observed and, importantly, siloed across hospitals due to privacy and regulatory
-            constraints. This project demonstrates a privacy-first, production-minded pipeline that uses **Federated Learning (FL)**
-            to collaboratively train a robust model for neonatal sepsis detection while keeping raw patient data local to each site.
-            """
-        )
+        # Stat cards
+        c1, c2, c3, c4 = st.columns(4)
+        cards = [
+            ("40,323", "PSV Patient Files"),
+            ("40", "Clinical Features"),
+            ("48", "Timesteps per Window"),
+            ("3", "FL Clients"),
+        ]
+        for col, (val, label) in zip([c1, c2, c3, c4], cards):
+            col.markdown(f"""
+            <div class="metric-card">
+              <div class="metric-value">{val}</div>
+              <div class="metric-label">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown("### Dataset at a glance")
-        st.markdown(
-            """
-            - **Scale:** Training and evaluation use a large collection of patient-window files (your dataset includes **>40,000** such files).  
-            - **Format:** Individual patient windows are stored as **pipe-separated values (PSV)** with a header row describing the columns. Each file represents one time-series window for a single patient.  
-            - **Window & features:** Each instance represents a fixed-length time window with **48 timesteps** and **40 clinical features** per timestep. The model ingests this as a tensor of shape **(1, 48, 40)** for inference.  
-            - **Target label:** Each patient-window file includes a binary target `SepsisLabel` (0 = no sepsis, 1 = sepsis) used for supervised training.
-            """
-        )
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("### Feature set (high level)")
-        st.markdown(
-            """
-            The 40 features combine routinely measured **vital signs**, **laboratory measurements**, **hematology/coagulation markers**, and **clinical metadata**.  
-            Categories include:
-            - **Vital signs:** HR, O2Sat, Temp, SBP, MAP, DBP, Resp, EtCO2  
-            - **Blood gas / electrolytes:** pH, PaCO2, HCO3, BaseExcess, SaO2, Chloride, Potassium, Calcium, Magnesium, Phosphate  
-            - **Metabolic / organ markers:** Glucose, Lactate, BUN, Creatinine, AST, Alkalinephos, Bilirubin (direct/total), TroponinI  
-            - **Hematology & coagulation:** Hct, Hgb, WBC, Platelets, Fibrinogen, PTT  
-            - **Metadata & provenance:** Age (days), Gender (binary), Unit flags (Unit1/Unit2), HospAdmTime (hours since admission), ICULOS (hours in ICU)
-            """
-        )
+        # Two-column: architecture | pipeline
+        left, right = st.columns(2)
+        with left:
+            st.markdown("### Architecture")
+            st.markdown("""
+            <div class="section-card">
+            <b>TimeSeriesTransformer</b><br>
+            CLS token · sinusoidal pos-emb · pad mask · focal loss
+            </div>
+            <div class="section-card">
+            <b>GRU-D</b><br>
+            Per-feature decay · empirical mean imputation · hidden decay
+            </div>
+            <div class="section-card">
+            <b>Ensemble + Calibration</b><br>
+            Blended probabilities · Temperature Scaling (LBFGS)
+            </div>
+            <div class="section-card">
+            <b>Federated Learning</b><br>
+            Flower (flwr) · FedAvg / FedProx (μ=0.01) / FedBN
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown("### Observed dataset characteristics")
-        st.markdown(
-            """
-            Based on the dataset structure and representative files:
-            - **Measurement density is heterogeneous.** Vital signs (HR, O2Sat, Resp, BP) are observed frequently, while many laboratory tests are sparse or intermittently recorded.  
-            - **High missingness for certain labs.** Laboratory and specialty markers often contain large blocks of missing values which inform our imputation strategy.  
-            - **Temporal anchors present.** Fields such as `ICULOS` and `HospAdmTime` provide useful timing context (time since ICU admission or hospital admission) that supplement the raw vitals/labs.  
-            - **Label imbalance.** Sepsis events are relatively rare compared to non-sepsis windows — this motivates focusing on metrics like AUPRC and recall for evaluation and tuning.
-            """
-        )
-
-        st.markdown("### Preprocessing pipeline (concise & reproducible)")
-        st.markdown(
-            """
-            1. **Parsing & shape validation** — read PSV with `sep='|'`, require 40 feature columns. Windows shorter than 48 timesteps are left-padded with zeros to preserve the most recent observations; windows longer than 48 are truncated to the most recent 48 timesteps.  
-            2. **Type coercion & missing values** — coerce to numeric; during inference the dashboard fills missing or non-numeric cells with `0` (training uses a consistent imputation policy or learned imputers). Warnings are surfaced when non-numeric values are present.  
-            3. **Normalization** — fit a scaler (feature-wise standardization or robust scaling) on the training distribution and persist it; apply the same transform at inference to ensure consistent input ranges for the model.  
-            4. **Tensor formatting** — convert the processed window to a float32 `torch.tensor` and add a batch dimension: `tensor.unsqueeze(0)` → shape `(1, 48, 40)`. The model outputs a single logit which is passed through `sigmoid` to yield a probability score.
-            """
-        )
-
-        st.markdown("### Modeling & federated setup")
-        st.markdown(
-            """
-            - **Architecture:** a *TimeSeriesTransformer* implemented in PyTorch. Transformers are chosen because they (a) capture temporal dependencies over medium-length windows, (b) attend across features to model cross-signal interactions, and (c) scale to multivariate clinical time series without heavy feature engineering.  
-            - **Output:** single scalar logit → `sigmoid(logit)` gives the sepsis probability (0–1).  
-            - **Federation:** training is simulated via **Flower (flwr)**. The server coordinates local training on each client and aggregates model updates to produce a global model — no patient-level data are shared. In our evaluation we simulate **2 training clients** and retain a held-out client for final testing to measure cross-site generalization.
-            """
-        )
-
-        st.markdown("### Evaluation methodology")
-        st.markdown(
-            """
-            - **Metrics reported:** AUROC, AUPRC, Accuracy, Precision, Recall, and F1. Because sepsis is a relatively rare outcome, **AUPRC** and **recall/F1 at clinically-relevant thresholds** are emphasized.  
-            - **Audit artifacts:** confusion matrices, ROC/PRC curves and raw JSON evaluation files are available in the dashboard for transparent auditing.  
-            - **Generalization test:** performance is measured on a held-out client to estimate out-of-sample generalization across hospital practices and measurement patterns.
-            """
-        )
-
-        st.markdown("### Clinical integration & dashboard features")
-        st.markdown(
-            """
-            - **Live Prediction:** the Predict page accepts PSV/CSV uploads, pasted CSV text, a one-row snapshot, or manual per-feature entry (40 fields). The UI pads/truncates to 48 timesteps and runs inference with the saved global model.  
-            - **Decision support:** predictions are presented as a probability gauge; thresholded guidance (low / moderate / high) and a visualization showing how a patient's score compares to the test-set distribution are provided to support clinical interpretation.  
-            - **Auditability & reproducibility:** evaluation JSONs, confusion matrices, and ROC/PRC plots are exposed for reviewers and auditors in the Model Metrics page.
-            """
-        )
-
-        st.markdown("### Data governance, safety & deployment considerations")
-        st.markdown(
-            """
-            - **Privacy-first design:** Federated Learning keeps patient data on-site; only model updates are exchanged. If required, secure aggregation and differential privacy mechanisms may be integrated to strengthen privacy guarantees.  
-            - **Clinical safety:** the system is a *decision support* tool and does not replace clinician judgment — any high-risk prediction should trigger clinical evaluation. Prospective clinical validation is required prior to any live clinical deployment.  
-            - **Production readiness:** for deployment add monitoring for data drift, model calibration checks, and human-in-the-loop workflows for flagged cases.
-            """
-        )
-
-        st.markdown("### What reviewers and mentors should look for")
-        st.markdown(
-            """
-            1. **Reproduce predictions**: use the Predict page (manual-entry mode is useful for edge-case testing).  
-            2. **Audit evaluation**: inspect ROC/PRC curves, confusion matrices, and raw evaluation JSON files. Focus on recall and AUPRC for rare-event detection.  
-            3. **Assess generalization**: review held-out client performance to verify that the federated model improves cross-site robustness versus a single-site model.  
-            4. **Request additional artifacts**: if needed, reviewers can ask for de-identified sample windows, the fitted scaler, or training logs for deeper verification.
-            """
-        )
+        with right:
+            st.markdown("### Pipeline Steps")
+            steps = [
+                ("1", "Preprocess", "PSV → per-patient .pt tensors (X, mask, deltas)"),
+                ("2", "Freeze splits", "70/15/15 stratified patient-level split"),
+                ("3", "Local baseline", "Train Transformer or GRU-D on train split"),
+                ("4", "FL simulation", "Flower server + N clients — FedAvg/FedBN"),
+                ("5", "Evaluate", "AUROC, AUPRC, bootstrap CIs on frozen test set"),
+                ("6", "Plots", "ROC / PRC comparison with confidence bands"),
+                ("7", "Serve", "FastAPI v2 · MC Dropout CIs · Prometheus /metrics"),
+            ]
+            for num, title, desc in steps:
+                st.markdown(f"""
+                <div style="display:flex;align-items:flex-start;margin:8px 0;">
+                  <div style="background:#1E3A5F;color:white;border-radius:50%;
+                       width:26px;height:26px;display:flex;align-items:center;
+                       justify-content:center;font-size:0.8rem;font-weight:700;
+                       flex-shrink:0;margin-top:2px;">{num}</div>
+                  <div style="margin-left:10px;">
+                    <b>{title}</b><br>
+                    <span style="color:#64748B;font-size:0.85rem;">{desc}</span>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.info("Tip: After reading this summary, try the Predict page to run a live inference and then visit Model Metrics to inspect evaluation artifacts and model behavior.")
+
+        # Feature categories
+        st.markdown("### 40 Clinical Features")
+        categories = {
+            "Vital Signs": ["HR", "O2Sat", "Temp", "SBP", "MAP", "DBP", "Resp", "EtCO2"],
+            "Blood Gas / Electrolytes": ["pH", "PaCO2", "HCO3", "BaseExcess", "SaO2",
+                                         "Chloride", "Potassium", "Calcium", "Magnesium", "Phosphate"],
+            "Metabolic / Organ": ["Glucose", "Lactate", "BUN", "Creatinine", "AST",
+                                  "Alkalinephos", "Bilirubin_direct", "Bilirubin_total", "TroponinI", "FiO2"],
+            "Hematology": ["Hct", "Hgb", "WBC", "Platelets", "Fibrinogen", "PTT"],
+            "Metadata": ["Age", "Gender", "Unit1", "Unit2", "HospAdmTime", "ICULOS"],
+        }
+        col_a, col_b = st.columns(2)
+        items = list(categories.items())
+        for i, (cat, feats) in enumerate(items):
+            target = col_a if i % 2 == 0 else col_b
+            with target:
+                st.markdown(f"**{cat}**")
+                chips = "".join(f"<span class='chip'>{f}</span>" for f in feats)
+                st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
+                st.markdown("")
+
+        st.markdown("---")
+
+        # Key design decisions
+        st.markdown("### Key Design Decisions")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            st.markdown("""
+            <div class="callout-info">
+            <b>Frozen test set</b><br>
+            Test split created once and never touched during training or model selection.
+            </div>
+            """, unsafe_allow_html=True)
+        with d2:
+            st.markdown("""
+            <div class="callout-info">
+            <b>Focal loss</b><br>
+            Handles ~7–9% positive rate without resampling; AUPRC is primary metric.
+            </div>
+            """, unsafe_allow_html=True)
+        with d3:
+            st.markdown("""
+            <div class="callout-info">
+            <b>FL test exclusion</b><br>
+            Test-split patients are excluded from FL client partitions — no data leakage.
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="callout-success" style="margin-top:16px;">
+        Navigate to <b>Predict</b> to run live inference, or <b>Model Metrics</b> to audit
+        Federated vs Local performance on the frozen test set.
+        </div>
+        """, unsafe_allow_html=True)
