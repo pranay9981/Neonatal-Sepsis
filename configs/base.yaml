@@ -50,7 +50,7 @@ evaluation:
 mlflow:
   enabled: false
   experiment: neonatal_sepsis
-  tracking_uri: mlruns
+  tracking_uri: sqlite:///mlflow.db
 
 optuna:
   n_trials: 50

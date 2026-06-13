@@ -264,6 +264,7 @@ def train(
             logger.warning("mlflow not installed; skipping experiment tracking. pip install mlflow")
             use_mlflow = False
         else:
+            mlflow.set_tracking_uri("sqlite:///mlflow.db")
             mlflow.set_experiment(mlflow_experiment)
             mlflow_run = mlflow.start_run(run_name=run_name)
 
