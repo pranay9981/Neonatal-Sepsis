@@ -97,23 +97,46 @@ def get_bootstrapped_ci(y_true, y_prob, n_bootstraps=1000):
     }
 
 
+PALETTE = ["#1E3A5F", "#E53935", "#2E7D32", "#F57F17"]
+
+def _style():
+    """Apply a clean, publication-quality matplotlib style."""
+    plt.rcParams.update({
+        "font.family": "DejaVu Sans",
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.linestyle": "--",
+        "grid.alpha": 0.4,
+        "axes.linewidth": 0.8,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "axes.labelsize": 13,
+        "axes.titlesize": 14,
+        "legend.fontsize": 10,
+        "legend.framealpha": 0.9,
+    })
+
+
 def plot_curves(results_files, out_file_base, plot_type='roc'):
     """
     Generates either an ROC or PRC plot based on the plot_type.
     """
-    plt.figure(figsize=(10, 8))
+    _style()
+    plt.figure(figsize=(9, 7))
     
-    for filepath in results_files:
+    for file_idx, filepath in enumerate(results_files):
         if not os.path.exists(filepath):
             print(f"[WARN] File not found, skipping: {filepath}")
             continue
-            
+
         with open(filepath, 'r') as f:
             data = json.load(f)
-            
+
         y_true = np.array(data.get('y_true'))
         y_prob = np.array(data.get('y_prob'))
         model_name = data.get('model_name', os.path.basename(filepath)).replace('_', ' ').title()
+        color = PALETTE[file_idx % len(PALETTE)]
         
         if y_true is None or y_prob is None:
             print(f"[WARN] File {filepath} is missing 'y_true' or 'y_prob' data. Skipping.")
@@ -133,27 +156,22 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
             score_name = "AUROC"
             
             # Plot the mean curve (stepwise)
-            plt.plot(fpr, tpr, drawstyle='steps-post', lw=2, 
-                     label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f} - {ci_high:.3f}])')
-            
+            plt.plot(fpr, tpr, drawstyle='steps-post', lw=2.5, color=color,
+                     label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f}–{ci_high:.3f}])')
             # Plot the shaded CI band
             base_fpr, tpr_low, tpr_high = ci_data['roc_curve_ci']
-            plt.fill_between(base_fpr, tpr_low, tpr_high, alpha=0.2)
+            plt.fill_between(base_fpr, tpr_low, tpr_high, alpha=0.15, color=color)
 
         elif plot_type == 'prc':
-            # Plot the actual, non-smoothed curve
             precision, recall, _ = precision_recall_curve(y_true, y_prob)
             score = average_precision_score(y_true, y_prob)
             ci_low, ci_high = ci_data['prc_score_ci']
             score_name = "AUPRC"
 
-            # Plot the mean curve (stepwise)
-            plt.plot(recall, precision, drawstyle='steps-post', lw=2,
-                     label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f} - {ci_high:.3f}])')
-            
-            # Plot the shaded CI band
+            plt.plot(recall, precision, drawstyle='steps-post', lw=2.5, color=color,
+                     label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f}–{ci_high:.3f}])')
             base_recall, precision_low, precision_high = ci_data['prc_curve_ci']
-            plt.fill_between(base_recall, precision_low, precision_high, alpha=0.2)
+            plt.fill_between(base_recall, precision_low, precision_high, alpha=0.15, color=color)
 
     if plot_type == 'roc':
         plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Chance (AUROC = 0.500)')
@@ -179,7 +197,7 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
             base, ext = os.path.splitext(out_file_base)
             filename = f"{base}_prc{ext}"
         
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=150, bbox_inches="tight")
         print(f"[PLOT] Saved {plot_type.upper()} plot to: {filename}")
     except Exception as e:
         print(f"[PLOT][ERROR] Failed to save plot: {e}")

@@ -57,8 +57,20 @@ def _load_run(run_dir: Path) -> Optional[dict]:
 class TrainingRunsPage:
     @staticmethod
     def render():
-        st.title("📂 Training Run Browser")
-        st.markdown("Explore all local training runs. Click a run to view its training curve and checkpoint path.")
+        st.markdown("""
+        <div style="background:linear-gradient(90deg,#4A148C 0%,#7B1FA2 100%);
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
+             box-sizing:border-box;width:100%;">
+          <div style="font-size:1.7rem;font-weight:700;">&#128194; Training Run Browser</div>
+          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
+            Browse all local training runs &#8212; compare checkpoints, metrics, and learning curves
+          </div>
+          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
+            Runs are saved under <code>runs/</code> each time you call
+            <code>python src/train_local.py ...</code>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         if not RUNS_DIR.exists():
             st.info("No `runs/` directory found. Run local training first (`make train-local` or `python src/train_local.py`).")

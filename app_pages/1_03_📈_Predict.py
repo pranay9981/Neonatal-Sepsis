@@ -321,7 +321,8 @@ class PredictPage:
         # ── Header ────────────────────────────────────────────────────────
         st.markdown("""
         <div style="background:linear-gradient(90deg,#1E3A5F 0%,#2563EB 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;">
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
+             box-sizing:border-box;width:100%;">
           <div style="font-size:1.7rem;font-weight:700;">&#128202; Live Patient Prediction</div>
           <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
             Provide 40 clinical features across up to 48 ICU hours &#8594; get a sepsis probability score

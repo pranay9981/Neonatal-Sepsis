@@ -50,7 +50,8 @@ class ProjectSummaryPage:
         # ── Hero ──────────────────────────────────────────────────────────
         st.markdown("""
         <div style="background:linear-gradient(90deg,#1E3A5F 0%,#2563EB 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;">
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
+             box-sizing:border-box;width:100%;">
           <div style="font-size:1.7rem;font-weight:700;letter-spacing:-0.3px;">
             👶 Neonatal Sepsis Detection
           </div>

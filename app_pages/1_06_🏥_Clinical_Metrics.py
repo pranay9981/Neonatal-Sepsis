@@ -66,7 +66,8 @@ class ClinicalMetricsPage:
         # ── Header ────────────────────────────────────────────────────────
         st.markdown("""
         <div style="background:linear-gradient(90deg,#1B5E20 0%,#2E7D32 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;">
+             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
+             box-sizing:border-box;width:100%;">
           <div style="font-size:1.7rem;font-weight:700;">🏥 Clinical Metrics</div>
           <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
             What matters at the bedside — beyond AUROC and accuracy
