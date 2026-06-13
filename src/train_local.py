@@ -32,6 +32,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Subset, random_split
 from tqdm import tqdm
 
+from calibration import TemperatureScaler
 from dataset import PatientDataset
 from model import TimeSeriesTransformer
 from model_grud import GRUD
@@ -247,6 +248,7 @@ def train(
     mlflow_experiment: str = "neonatal_sepsis",
     scaler_path: str | None = None,
     augment: bool = False,
+    use_temperature_scaling: bool = False,
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -442,6 +444,12 @@ def train(
     threshold_path = os.path.join(run_folder, "threshold.json")
     with open(threshold_path, "w") as fh:
         json.dump({"threshold": threshold, "method": "youden_j"}, fh, indent=2)
+
+    if use_temperature_scaling and len(final_val_logits) >= 2 and len(np.unique(final_val_y)) >= 2:
+        ts = TemperatureScaler()
+        ts.fit(np.array(final_val_logits), np.array(final_val_y))
+        ts.save(threshold_path)
+        logger.info("Temperature scaling fitted: T=%.4f", ts.temperature)
 
     logger.info("Calibrated decision threshold: %.4f (saved to %s)", threshold, threshold_path)
     logger.info("Training complete. Best AUROC=%.4f  Best AUPRC=%.4f", best_auc, best_ap)

@@ -1,0 +1,57 @@
+# configs/base.yaml — canonical hyperparameter config for all experiments
+# Override individual keys via environment variables or experiment YAMLs.
+
+data:
+  raw_folder: data/raw
+  processed_folder: data/processed/patients
+  splits_dir: data/splits
+  seq_len: 48
+  n_features: 40
+  train_ratio: 0.70
+  val_ratio: 0.15
+
+model:
+  name: transformer        # transformer | grud
+  d_model: 128
+  n_heads: 4
+  num_layers: 2
+  dim_feedforward: 256
+  dropout: 0.1
+  hidden_size: 128         # GRU-D only
+
+training:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  patience: 10
+  warmup_epochs: 3
+  clip_grad: 1.0
+  use_focal: false
+  focal_gamma: 2.0
+  augment: true
+  use_temperature_scaling: true
+  seed: 42
+
+federated:
+  rounds: 20
+  n_clients: 5
+  local_epochs: 1
+  batch_size: 32
+  lr: 1.0e-3
+  mu: 0.01                 # FedProx proximal term (0 = plain FedAvg)
+  strategy: fedavg         # fedavg | fedbn
+  heterogeneous: false     # non-IID hospital simulation
+
+evaluation:
+  bootstrap_n: 1000
+  bootstrap_ci: 0.95
+  horizon: 6               # early-warning hours
+
+mlflow:
+  enabled: false
+  experiment: neonatal_sepsis
+  tracking_uri: mlruns
+
+optuna:
+  n_trials: 50
+  study_name: sepsis_hpo
