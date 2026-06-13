@@ -1,9 +1,11 @@
 # src/dataset.py
+import json
+import os
+import pickle
+
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-import os, glob
-import pickle
-import numpy as np
 
 try:
     import lmdb
@@ -30,17 +32,35 @@ class PatientDataset(Dataset):
     - mode='grud': yields (X_filled, mask, deltas, y)
         Uses pre-computed mask/deltas stored by parallel_preprocess.py when available;
         falls back to NaN-detection for older .pt files.
+
+    scaler_path: optional path to scaler.json (mean/std per feature).
+        When provided, X is normalised as (X - mean) / std in __getitem__.
+        Padded/missing positions are normalised too — handled correctly because
+        the transformer pad_mask ignores them and GRU-D's missingness mask
+        overwrites them during imputation.
+
+    augment: if True, apply on-the-fly time-series augmentation (jitter + window slicing).
+        Should only be enabled during training, not evaluation.
     """
 
-    def __init__(self, index_path, mode='transformer'):
+    def __init__(self, index_path, mode="transformer", scaler_path=None, augment=False):
         d = torch.load(index_path, weights_only=False)
-        self.x_paths = d.get('x_paths', [])
+        self.x_paths = d.get("x_paths", [])
         self.y_indexed = None
-        if 'y' in d:
-            self.y_indexed = d['y']
-            if hasattr(self.y_indexed, 'tolist'):
+        if "y" in d:
+            self.y_indexed = d["y"]
+            if hasattr(self.y_indexed, "tolist"):
                 self.y_indexed = self.y_indexed.tolist()
         self.mode = mode
+        self.augment = augment
+
+        self._mean: torch.Tensor | None = None
+        self._std: torch.Tensor | None = None
+        if scaler_path is not None and os.path.exists(scaler_path):
+            with open(scaler_path) as f:
+                s = json.load(f)
+            self._mean = torch.tensor(s["mean"], dtype=torch.float32)
+            self._std = torch.tensor(s["std"], dtype=torch.float32).clamp(min=1e-8)
 
     def __len__(self):
         return len(self.x_paths)
@@ -54,10 +74,22 @@ class PatientDataset(Dataset):
         path, key = s.split("#", 1)
         env = lmdb.open(path, readonly=True, lock=False)
         with env.begin() as txn:
-            raw = txn.get(key.encode('utf-8'))
+            raw = txn.get(key.encode("utf-8"))
             obj = pickle.loads(raw)
         env.close()
         return obj
+
+    def _apply_scaler(self, X: torch.Tensor) -> torch.Tensor:
+        if self._mean is None:
+            return X
+        return (X - self._mean.to(X.device)) / self._std.to(X.device)
+
+    def _augment(self, X: torch.Tensor) -> torch.Tensor:
+        """Light on-the-fly augmentation: Gaussian jitter."""
+        if not self.augment:
+            return X
+        X = X + torch.randn_like(X) * 0.05
+        return X
 
     def __getitem__(self, idx):
         spec = self.x_paths[idx]
@@ -66,33 +98,36 @@ class PatientDataset(Dataset):
         else:
             data = self._load_pt(spec)
 
-        X = data['X'].float()  # (T, F)
+        X = data["X"].float()  # (T, F)
         T = X.shape[0]
-        y = float(data.get('y', 0))
+        y = float(data.get("y", 0))
         if self.y_indexed is not None:
             y = float(self.y_indexed[idx])
 
-        if self.mode == 'transformer':
-            # Build padding mask: True = ignore (front-padded zeros).
-            actual_len = int(data.get('actual_len', T))
+        if self.mode == "transformer":
+            actual_len = int(data.get("actual_len", T))
             pad_mask = torch.zeros(T, dtype=torch.bool)
             if actual_len < T:
-                pad_mask[:T - actual_len] = True
+                pad_mask[: T - actual_len] = True
+
+            X = self._apply_scaler(X)
+            X = self._augment(X)
             return X, pad_mask, torch.tensor(y, dtype=torch.float32)
 
-        elif self.mode == 'grud':
-            if 'mask' in data and 'deltas' in data:
-                # Fast path: pre-computed by preprocessing pipeline.
-                mask = data['mask'].float()
-                deltas = data['deltas'].float()
+        elif self.mode == "grud":
+            if "mask" in data and "deltas" in data:
+                mask = data["mask"].float()
+                deltas = data["deltas"].float()
                 X_filled = X.clone()
                 X_filled[torch.isnan(X_filled)] = 0.0
             else:
-                # Fallback for older .pt files: derive from NaN positions.
                 mask = (~torch.isnan(X)).float()
                 X_filled = X.clone()
                 X_filled[torch.isnan(X_filled)] = 0.0
                 deltas = _compute_deltas_fallback(mask)
+
+            X_filled = self._apply_scaler(X_filled)
+            X_filled = self._augment(X_filled)
             return X_filled, mask, deltas, torch.tensor(y, dtype=torch.float32)
 
         else:
