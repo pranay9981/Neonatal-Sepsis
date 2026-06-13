@@ -45,7 +45,7 @@ def create_windowed_dataset(
 
     d = torch.load(index_path, weights_only=False)
     x_paths = d["x_paths"]
-    print(f"Processing {len(x_paths)} patients → seq_len={seq_len}, stride={stride}, horizon={horizon}h")
+    print(f"Processing {len(x_paths)} patients -> seq_len={seq_len}, stride={stride}, horizon={horizon}h")
 
     all_window_paths = []
     all_labels = []

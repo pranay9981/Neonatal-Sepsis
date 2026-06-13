@@ -34,7 +34,7 @@ def create_splits(
         raise ValueError(f"x_paths ({n}) and labels ({len(labels)}) length mismatch")
 
     test_ratio = round(1.0 - train_ratio - val_ratio, 6)
-    print(f"Splitting {n} patients → train={train_ratio:.0%} / val={val_ratio:.0%} / test={test_ratio:.0%}")
+    print(f"Splitting {n} patients -> train={train_ratio:.0%} / val={val_ratio:.0%} / test={test_ratio:.0%}")
 
     # Step 1: carve out the test set
     sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_ratio, random_state=seed)
