@@ -16,6 +16,10 @@ from sklearn.metrics import roc_curve, precision_recall_curve
 
 def sensitivity_at_specificity(y_true, y_prob, target_specificity: float = 0.95):
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    # Exclude sklearn's artificial boundary point (threshold = max_score+1, not a valid probability).
+    valid = np.isfinite(thresholds) & (thresholds >= 0.0) & (thresholds <= 1.0)
+    if valid.any():
+        fpr, tpr, thresholds = fpr[valid], tpr[valid], thresholds[valid]
     specificity = 1.0 - fpr
     idx = np.argmin(np.abs(specificity - target_specificity))
     return float(tpr[idx]), float(thresholds[idx])
@@ -23,6 +27,9 @@ def sensitivity_at_specificity(y_true, y_prob, target_specificity: float = 0.95)
 
 def specificity_at_sensitivity(y_true, y_prob, target_sensitivity: float = 0.90):
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    valid = np.isfinite(thresholds) & (thresholds >= 0.0) & (thresholds <= 1.0)
+    if valid.any():
+        fpr, tpr, thresholds = fpr[valid], tpr[valid], thresholds[valid]
     idx = np.argmin(np.abs(tpr - target_sensitivity))
     return float(1.0 - fpr[idx]), float(thresholds[idx])
 

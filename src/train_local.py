@@ -347,7 +347,9 @@ def train(
     best_ap = 0.0
     early_stop = EarlyStopping(patience=patience)
 
-    # Accumulate final val predictions for threshold calibration.
+    # Track val predictions from the best-AUROC epoch for threshold calibration.
+    best_val_logits: list = []
+    best_val_y: list = []
     final_val_logits, final_val_y = [], []
 
     for epoch in range(1, epochs + 1):
@@ -410,6 +412,7 @@ def train(
         )
         if auc > best_auc:
             best_auc = auc
+            best_val_logits, best_val_y = val_logits[:], val_y[:]
             torch.save({"model_state": model.state_dict()}, os.path.join(ckpt_dir, "model_best.pt"))
         if ap > best_ap:
             best_ap = ap
@@ -439,15 +442,18 @@ def train(
             )
             break
 
-    # Threshold calibration: find the operating point that maximises Youden's J.
-    threshold = calibrate_threshold(final_val_logits, final_val_y)
+    # Threshold calibration on the best-AUROC epoch's val predictions (matches model_best.pt).
+    # Fall back to final epoch if best was never recorded (e.g., no improvement at all).
+    cal_logits = best_val_logits if best_val_logits else final_val_logits
+    cal_y = best_val_y if best_val_y else final_val_y
+    threshold = calibrate_threshold(cal_logits, cal_y)
     threshold_path = os.path.join(run_folder, "threshold.json")
     with open(threshold_path, "w") as fh:
         json.dump({"threshold": threshold, "method": "youden_j"}, fh, indent=2)
 
-    if use_temperature_scaling and len(final_val_logits) >= 2 and len(np.unique(final_val_y)) >= 2:
+    if use_temperature_scaling and len(cal_logits) >= 2 and len(np.unique(cal_y)) >= 2:
         ts = TemperatureScaler()
-        ts.fit(np.array(final_val_logits), np.array(final_val_y))
+        ts.fit(np.array(cal_logits), np.array(cal_y))
         ts.save(threshold_path)
         logger.info("Temperature scaling fitted: T=%.4f", ts.temperature)
 
@@ -487,6 +493,7 @@ if __name__ == "__main__":
     ap.add_argument("--mlflow_experiment", type=str, default="neonatal_sepsis")
     ap.add_argument("--scaler_path", type=str, default=None, help="Path to scaler.json for feature normalisation")
     ap.add_argument("--augment", action="store_true", help="Enable on-the-fly Gaussian jitter augmentation")
+    ap.add_argument("--use_temperature_scaling", action="store_true", help="Apply temperature scaling after training")
     args = ap.parse_args()
 
     train(
@@ -508,4 +515,5 @@ if __name__ == "__main__":
         mlflow_experiment=args.mlflow_experiment,
         scaler_path=args.scaler_path,
         augment=args.augment,
+        use_temperature_scaling=args.use_temperature_scaling,
     )

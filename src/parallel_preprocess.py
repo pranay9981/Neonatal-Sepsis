@@ -206,9 +206,22 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
     return (fp, True, out_path)
 
 
+def recompute_scaler_from_index(train_index_path: str, out_folder: str):
+    """Recompute scaler.json using ONLY training patients to avoid test-set leakage.
+    Call this after create_splits.py with the train_index.pt path."""
+    d = torch.load(train_index_path, weights_only=False)
+    x_paths = d.get("x_paths", [])
+    if not x_paths:
+        logger.warning("No paths in %s; skipping scaler recomputation.", train_index_path)
+        return
+    logger.info("Recomputing scaler from %d train-only patients (no test leakage)...", len(x_paths))
+    _compute_and_save_scaler(x_paths, out_folder)
+
+
 def _compute_and_save_scaler(x_paths, out_folder):
-    """Compute per-feature mean/std across all processed patients and save as scaler.json."""
-    logger.info("Computing feature scaler from %d processed patients...", len(x_paths))
+    """Compute per-feature mean/std across the provided patients and save as scaler.json.
+    NOTE: call recompute_scaler_from_index() after create_splits.py to fit on train-only data."""
+    logger.info("Computing feature scaler from %d patients...", len(x_paths))
     all_arrays = []
     for xp in x_paths:
         try:

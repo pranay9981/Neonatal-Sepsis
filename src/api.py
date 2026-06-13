@@ -14,12 +14,17 @@ Usage:
 """
 
 import json
+import logging
 import os
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
+
+_logger = logging.getLogger(__name__)
+_mc_lock = threading.Lock()
 
 import numpy as np
 import torch
@@ -83,8 +88,8 @@ def _append_audit(entry: dict):
     try:
         with open(AUDIT_LOG, "a") as f:
             f.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.error("Audit log write failed — prediction not recorded: %s", e)
 
 
 @asynccontextmanager
@@ -169,9 +174,10 @@ def predict(req: PredictRequest):
     prob_low = prob_high = None
     with torch.no_grad():
         if MC_SAMPLES > 1:
-            _model.train()  # enable dropout for MC sampling
-            mc_probs = [float(torch.sigmoid(_model(tensor)).squeeze()) for _ in range(MC_SAMPLES)]
-            _model.eval()
+            with _mc_lock:
+                _model.train()  # enable dropout for MC sampling
+                mc_probs = [float(torch.sigmoid(_model(tensor)).squeeze()) for _ in range(MC_SAMPLES)]
+                _model.eval()
             prob = float(np.mean(mc_probs))
             prob_low = float(np.percentile(mc_probs, 2.5))
             prob_high = float(np.percentile(mc_probs, 97.5))

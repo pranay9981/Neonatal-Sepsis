@@ -235,7 +235,7 @@ class FlowerClient(fl.client.NumPyClient):
 
     # ----- Flower NumPyClient interface -----
 
-    def get_parameters(self) -> List[np.ndarray]:
+    def get_parameters(self, config: Dict[str, Any]) -> List[np.ndarray]:
         return state_dict_to_ndarrays(self.model.state_dict())
 
     def set_parameters(self, arrays: List[np.ndarray]):

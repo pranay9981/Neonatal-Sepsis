@@ -70,7 +70,7 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str)
     seed_everything(42 + trial.number)
     mode = "grud" if model_name == "grud" else "transformer"
     ds = PatientDataset(index_path, mode=mode)
-    train_ds, val_ds, _ = stratified_train_val_split(ds, val_ratio=0.2)
+    train_ds, val_ds, all_labels = stratified_train_val_split(ds, val_ratio=0.2)
 
     collate = collate_grud if model_name == "grud" else None
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
@@ -87,7 +87,12 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str)
         if xm is not None:
             model.set_empirical_mean(xm)
 
-    loss_fn = nn.BCEWithLogitsLoss()
+    pos = sum(all_labels)
+    neg = len(all_labels) - pos
+    pos_weight = torch.tensor(
+        [(neg / (pos + 1e-6)) if pos > 0 else 1.0], dtype=torch.float32
+    ).to(device)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     opt = optim.Adam(model.parameters(), lr=lr)
     scheduler = make_warmup_cosine_scheduler(opt, warmup_epochs=2, total_epochs=epochs)
 

@@ -37,7 +37,7 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
     """
 
     BN_KEYWORDS = ("running_mean", "running_var", "num_batches_tracked",
-                   "batch_norm", "bn", "norm")
+                   "batchnorm", "batch_norm")
 
     def __init__(self, model_name: str, n_features: int, seq_len: int,
                  save_dir: str, checkpoints_dir: str,
@@ -78,10 +78,13 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
         # Compute weighted average for non-BN parameters only
         total_examples = sum(n for _, n in weights_results)
         agg_arrays = []
+        first_client_arrays = weights_results[0][0]
         for i, key in enumerate(keys):
             if self._is_bn_key(key):
-                # Use first client's BN params as placeholder (won't be sent to clients)
-                agg_arrays.append(weights_results[0][0][i])
+                if i < len(first_client_arrays):
+                    agg_arrays.append(first_client_arrays[i])
+                else:
+                    agg_arrays.append(ref_model.state_dict()[key].cpu().numpy())
             else:
                 weighted = sum(
                     w[i] * n for w, n in weights_results
