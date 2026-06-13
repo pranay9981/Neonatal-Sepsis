@@ -2,7 +2,7 @@
 # Works with GNU make (Git Bash on Windows, or Linux/macOS).
 # Run `make help` to see all targets.
 
-.PHONY: help preprocess split train-local fl-sim evaluate plot dashboard api tests hyper pipeline clean clean-all
+.PHONY: help preprocess create-splits split train-local cross-validate fl-sim evaluate plot dashboard api tests hyper pipeline clean clean-all
 
 # ── Configurable defaults (override on the command line) ──────────────
 RAW_FOLDER    ?= data/raw
@@ -17,10 +17,12 @@ PATIENCE      ?= 5
 
 PROCESSED_DIR  = data/processed/patients
 INDEX          = $(PROCESSED_DIR)/index_with_labels.pt
+SPLITS_DIR     = data/splits
+TEST_INDEX     = $(SPLITS_DIR)/test_index.pt
+TRAIN_INDEX    = $(SPLITS_DIR)/train_index.pt
 CLIENTS_DIR    = data/processed/clients
 CLIENT1_INDEX  = $(CLIENTS_DIR)/client1/index.pt
 CLIENT2_INDEX  = $(CLIENTS_DIR)/client2/index.pt
-CLIENT3_INDEX  = $(CLIENTS_DIR)/client3/index.pt
 GLOBAL_BEST    = server_out/global_best.pt
 
 # ── Help ──────────────────────────────────────────────────────────────
@@ -35,20 +37,32 @@ preprocess: ## Step 1 — Preprocess raw PSV files into patient tensors
 		--out_folder $(PROCESSED_DIR) \
 		--seq_len $(SEQ_LEN)
 
-split: ## Step 2 — Split processed patients into federated client folders
+create-splits: ## Step 2 — Create frozen 70/15/15 patient-level stratified splits
+	python scripts/create_splits.py \
+		--index $(INDEX) \
+		--out_dir $(SPLITS_DIR)
+
+split: ## Step 3 — Split processed patients into federated client folders (test excluded)
 	python src/split_clients.py \
 		--processed_folder $(PROCESSED_DIR) \
 		--out_root $(CLIENTS_DIR) \
-		--n_clients $(N_CLIENTS)
+		--n_clients $(N_CLIENTS) \
+		--splits_dir $(SPLITS_DIR)
 
-train-local: ## Step 3 — Train a local baseline model
+train-local: ## Step 4 — Train a local baseline model on the train split
 	python src/train_local.py \
-		--index $(INDEX) \
+		--index $(TRAIN_INDEX) \
 		--model $(MODEL) \
 		--epochs $(EPOCHS) \
 		--batch_size $(BATCH_SIZE) \
 		--patience $(PATIENCE) \
 		--run_name local_baseline
+
+cross-validate: ## Step 4b — 5-fold cross-validation on train split
+	python scripts/cross_validate.py \
+		--index $(TRAIN_INDEX) \
+		--model $(MODEL) \
+		--epochs $(EPOCHS)
 
 fl-sim: ## Step 4 — Run federated learning simulation (server + clients auto-launched)
 	python scripts/run_fl_sim.py \
@@ -58,9 +72,9 @@ fl-sim: ## Step 4 — Run federated learning simulation (server + clients auto-l
 		--n_features $(N_FEATURES) \
 		--seq_len $(SEQ_LEN)
 
-evaluate: ## Step 5 — Evaluate federated + local models on held-out test set
+evaluate: ## Step 6 — Evaluate federated + local models on frozen test set
 	python src/evaluate.py \
-		--index $(CLIENT3_INDEX) \
+		--index $(TEST_INDEX) \
 		--ckpt $(GLOBAL_BEST) \
 		--model $(MODEL) \
 		--n_features $(N_FEATURES) \
@@ -69,7 +83,7 @@ evaluate: ## Step 5 — Evaluate federated + local models on held-out test set
 	@LATEST=$$(ls -t runs/*/checkpoints/model_best.pt 2>/dev/null | head -1); \
 	if [ -n "$$LATEST" ]; then \
 		python src/evaluate.py \
-			--index $(CLIENT3_INDEX) \
+			--index $(TEST_INDEX) \
 			--ckpt "$$LATEST" \
 			--model $(MODEL) \
 			--n_features $(N_FEATURES) \
@@ -98,8 +112,8 @@ api: ## Start the FastAPI inference server on port 8000
 tests: ## Run all unit and integration tests
 	python -m pytest tests/ -v
 
-hyper: ## Run hyperparameter search
-	python src/hyperparam_search.py
+hyper: ## Run Bayesian hyperparameter optimisation (Optuna)
+	python scripts/optuna_search.py
 
 # ── Cleanup ───────────────────────────────────────────────────────────
 clean: ## Remove training runs and generated results (keeps processed data)
