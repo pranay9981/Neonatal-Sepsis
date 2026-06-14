@@ -107,6 +107,8 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
     def aggregate_evaluate(self, server_round: int, results, failures):
         agg, metrics = super().aggregate_evaluate(server_round, results, failures)
 
+        # Prefer AUROC/AUPRC (higher = better); fall back to negated loss so the
+        # same "higher is better" comparison works in both cases.
         val = None
         for key in ("auroc", "auprc"):
             if isinstance(metrics, dict) and key in metrics:
@@ -116,6 +118,12 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                 except (ValueError, TypeError):
                     pass
 
+        if val is None and agg is not None:
+            try:
+                val = -float(agg)  # negate: lower loss → higher score
+            except (ValueError, TypeError):
+                pass
+
         if val is not None and not np.isnan(val):
             if self.best_metric is None or val > self.best_metric:
                 src = os.path.join(self.checkpoints_dir, f"global_round_{server_round}.pt")
@@ -124,5 +132,5 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                     shutil.copyfile(src, dst)
                     self.best_metric = val
                     self.best_round = server_round
-                    logger.info("FedBN: new best (round %d, metric=%.4f)", server_round, val)
+                    logger.info("FedBN: new best (round %d, loss=%.4f)", server_round, -val)
         return agg, metrics

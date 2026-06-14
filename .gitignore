@@ -45,6 +45,8 @@ runs/
 hyper_results/
 checkpoints/
 server_out/*
+server_out_fedbn/*
+checkpoints_fedbn/*
 
 # =============================================================================
 # Model Files

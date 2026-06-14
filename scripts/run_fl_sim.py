@@ -33,6 +33,7 @@ def run_fl_sim(
     n_features=40,
     seq_len=48,
     client_startup_delay=6.0,
+    strategy="fedavg",
 ):
     save_dir = save_dir or str(PROJECT_ROOT / "server_out")
     checkpoints_dir = checkpoints_dir or str(PROJECT_ROOT / "checkpoints")
@@ -56,6 +57,7 @@ def run_fl_sim(
         "--save_dir", save_dir,
         "--checkpoints_dir", checkpoints_dir,
         "--round_timeout", str(round_timeout),
+        "--strategy", strategy,
     ]
 
     client_cmds = [
@@ -139,6 +141,7 @@ if __name__ == "__main__":
     ap.add_argument("--seq_len", type=int, default=48)
     ap.add_argument("--save_dir", default=None)
     ap.add_argument("--checkpoints_dir", default=None)
+    ap.add_argument("--strategy", choices=["fedavg", "fedbn"], default="fedavg")
     args = ap.parse_args()
 
     run_fl_sim(
@@ -154,4 +157,5 @@ if __name__ == "__main__":
         seq_len=args.seq_len,
         save_dir=args.save_dir,
         checkpoints_dir=args.checkpoints_dir,
+        strategy=args.strategy,
     )

@@ -285,6 +285,8 @@ def parse_args():
     ap.add_argument("--save_dir", type=str, default="./server_out")
     ap.add_argument("--checkpoints_dir", type=str, default="./checkpoints")
     ap.add_argument("--best_name", type=str, default="global_best.pt")
+    ap.add_argument("--strategy", choices=["fedavg", "fedbn"], default="fedavg",
+                    help="Aggregation strategy: fedavg (default) or fedbn")
     ap.add_argument("--fraction_fit", type=float, default=1.0)
     ap.add_argument("--fraction_evaluate", type=float, default=1.0)
     ap.add_argument("--min_fit_clients", type=int, default=None)
@@ -316,8 +318,7 @@ def main():
         logger.warning("Failed to build initial parameters from model: %s. Server will request from a client instead.", e)
 
     # Build a strategy instance
-    # The 'initial_parameters' argument is passed to the strategy, NOT to start_server
-    strategy = SaveEveryRoundFedAvg(
+    strategy_kwargs = dict(
         model_name=args.model,
         n_features=args.n_features,
         seq_len=args.seq_len,
@@ -331,6 +332,13 @@ def main():
         min_available_clients=args.min_clients,
         initial_parameters=initial_parameters,
     )
+    if args.strategy == "fedbn":
+        from fl_fedbn import FedBNStrategy
+        strategy = FedBNStrategy(**strategy_kwargs)
+        logger.info("Using FedBN strategy")
+    else:
+        strategy = SaveEveryRoundFedAvg(**strategy_kwargs)
+        logger.info("Using FedAvg strategy")
 
     # Build server config compatible with flwr
     server_config = fl.server.ServerConfig(num_rounds=args.rounds, round_timeout=args.round_timeout)

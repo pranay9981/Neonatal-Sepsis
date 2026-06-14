@@ -268,66 +268,102 @@ python src/split_clients.py \
 
 Add `--heterogeneous` to simulate non-IID data across hospitals (different class distributions per client).
 
-#### Run the FL simulation (automated — recommended)
+#### Run the FL simulation — FedAvg (automated — recommended)
 
 ```bash
-python scripts/run_fl_sim.py \
-  --client_indexes \
-      data/processed/clients/client1/index.pt \
-      data/processed/clients/client2/index.pt \
-  --model transformer \
-  --rounds 20 \
-  --local_epochs 1
+python scripts/run_fl_sim.py --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt --model grud --rounds 10 --strategy fedavg --save_dir server_out --checkpoints_dir checkpoints
 ```
 
 This starts the Flower server and all clients as subprocesses automatically. Output: `server_out/global_best.pt`.
+
+> **Windows PowerShell:** Pass all `--client_indexes` paths on a **single line**. A line break without a trailing backtick (`` ` ``) ends the command early and only the paths before the break are parsed — you end up with fewer clients than intended.
+
+#### Run the FL simulation — FedBN
+
+FedBN keeps BatchNorm statistics local to each client and only averages non-BN weights. Use a different `--save_dir` to avoid overwriting FedAvg results:
+
+```bash
+python scripts/run_fl_sim.py --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt --model grud --rounds 10 --strategy fedbn --save_dir server_out_fedbn --checkpoints_dir checkpoints_fedbn
+```
+
+Output: `server_out_fedbn/global_best.pt`.
 
 #### Run manually (separate terminals)
 
 ```bash
 # Terminal 1 — Server
-python src/fl_server.py --model transformer --rounds 20 --min_clients 2
+python src/fl_server.py --model grud --rounds 10 --min_clients 5 --strategy fedavg
 
 # Terminal 2 — Client 1
 python src/fl_client.py \
   --index data/processed/clients/client1/index.pt \
-  --model transformer \
+  --model grud \
   --server_address 127.0.0.1:8080
 
-# Terminal 3 — Client 2
-python src/fl_client.py \
-  --index data/processed/clients/client2/index.pt \
-  --model transformer \
-  --server_address 127.0.0.1:8080
-```
-
-#### Use FedBN instead of FedAvg
-
-```bash
-python src/fl_server.py --strategy fedbn --model transformer --rounds 20
+# (Repeat for clients 2–5 in separate terminals)
 ```
 
 ---
 
 ### 7.5 — Evaluate on the frozen test set
 
+Run `src/evaluate.py` once per model. The `--model` flag must match the architecture of the checkpoint you are evaluating.
+
 ```bash
-# Federated model
+# Federated GRU-D — FedAvg
 python src/evaluate.py \
   --index data/splits/test_index.pt \
   --ckpt server_out/global_best.pt \
-  --model transformer \
+  --model grud \
   --out_file eval_results_federated.json
 
-# Local baseline (update the path to your run's checkpoint)
+# Federated GRU-D — FedBN (if you ran the FedBN simulation)
 python src/evaluate.py \
   --index data/splits/test_index.pt \
-  --ckpt runs/<your-run>/checkpoints/model_best.pt \
+  --ckpt server_out_fedbn/global_best.pt \
+  --model grud \
+  --out_file eval_results_fedbn.json
+
+# GRU-D local baseline
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt runs/<your-grud-run>/checkpoints/model_best.pt \
+  --model grud \
+  --out_file eval_results_grud.json
+
+# Transformer local baseline
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt runs/<your-transformer-run>/checkpoints/model_best.pt \
   --model transformer \
-  --out_file eval_results_local.json
+  --out_file eval_results_transformer.json
 ```
 
 Each output JSON contains: `auroc`, `auprc`, `precision`, `recall`, `f1`, `threshold`, `y_true`, `y_prob`, and 95% bootstrap CIs.
+
+Once the individual eval JSONs exist, the **Model Metrics** dashboard page auto-discovers them and displays interactive ROC/PRC curves for all four models side by side.
+
+---
+
+### 7.5b — Evaluate the Ensemble
+
+The Ensemble blends Transformer + GRU-D probabilities (weighted average). Both local checkpoints must exist before running this.
+
+```bash
+python scripts/eval_ensemble.py \
+  --index data/splits/test_index.pt \
+  --transformer_ckpt runs/<your-transformer-run>/checkpoints/model_best.pt \
+  --grud_ckpt runs/<your-grud-run>/checkpoints/model_best.pt \
+  --out_file eval_results_ensemble.json \
+  --alpha 0.5
+```
+
+| Flag | Effect |
+|---|---|
+| `--alpha` | Transformer weight in the blend (0.5 = equal; lower = more GRU-D weight) |
+| `--device` | `cpu` or `cuda` |
+
+Output: `eval_results_ensemble.json` — same format as single-model evals. The dashboard picks it up automatically.
 
 ---
 
@@ -400,20 +436,61 @@ print(metrics)
 
 ## API Server
 
-Start the inference server:
+The FastAPI server loads one model checkpoint and serves it over HTTP. You must tell it **which checkpoint** and **which architecture** via environment variables before starting.
+
+### Environment variables
+
+| Variable | Values | Default | Notes |
+|---|---|---|---|
+| `SEPSIS_MODEL_PATH` | path to `.pt` file | `server_out/global_best.pt` | The checkpoint to load |
+| `SEPSIS_MODEL_TYPE` | `grud` \| `transformer` | `grud` | Must match the checkpoint's architecture |
+| `SEPSIS_MC_SAMPLES` | integer | `0` | MC Dropout passes for confidence intervals (0 = disabled) |
+| `SEPSIS_SCALER_PATH` | path to `scaler.json` | — | Feature normalisation — recommended |
+
+### Start the server
 
 ```bash
-# Set model path (can also be set in .env)
+# Serve the federated GRU-D model
 export SEPSIS_MODEL_PATH=server_out/global_best.pt
+export SEPSIS_MODEL_TYPE=grud
 export SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
+uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 
+# Serve the FedBN GRU-D model instead
+export SEPSIS_MODEL_PATH=server_out_fedbn/global_best.pt
+export SEPSIS_MODEL_TYPE=grud
+uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+
+# Serve the local Transformer
+export SEPSIS_MODEL_PATH=runs/<your-transformer-run>/checkpoints/model_best.pt
+export SEPSIS_MODEL_TYPE=transformer
 uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Test it:
+> **Windows PowerShell:** Use `$env:SEPSIS_MODEL_PATH = "server_out/global_best.pt"` instead of `export`.
+
+### Test the server
 
 ```bash
+# Health check
 curl http://localhost:8000/health
+
+# Predict (GRU-D — data, mask, and deltas all required for full accuracy)
+curl -X POST http://localhost:8000/v2/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [[85, 98, 37.1, 120, 80, 65, 18, 0, 0, 24, 0, 7.4, 40, 98, 0, 15, 70, 9, 102, 0.9, 0, 110, 2.1, 0.8, 3.5, 4.2, 1.2, 0, 42, 14, 28, 8, 250, 200, 65, 1, 0, 0, -6, 3]],
+    "mask": [[1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1]],
+    "deltas": [[0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 6, 0, 0, 0, 4, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0]]
+  }'
+```
+
+### Enable MC Dropout confidence intervals
+
+```bash
+export SEPSIS_MC_SAMPLES=50
+uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+# The /v2/predict response will now include ci_lower and ci_upper
 ```
 
 Key endpoints:
@@ -474,12 +551,19 @@ runs/
     checkpoints/model_best.pt
     logs/
 
-server_out/
-  global_best.pt            best federated model
-  checkpoints/              per-round federated checkpoints
+server_out/                 FedAvg results
+  global_best.pt            best federated model (FedAvg)
+  checkpoints/              per-round checkpoints
 
-eval_results_federated.json
-eval_results_local.json
+server_out_fedbn/           FedBN results (if you ran the FedBN simulation)
+  global_best.pt            best federated model (FedBN)
+  checkpoints_fedbn/        per-round FedBN checkpoints
+
+eval_results_federated.json      FedAvg GRU-D test-set results
+eval_results_fedbn.json          FedBN GRU-D test-set results
+eval_results_grud.json           GRU-D local test-set results
+eval_results_transformer.json    Transformer local test-set results
+eval_results_ensemble.json       Ensemble (Transformer+GRU-D) test-set results
 model_comparison_plot.png
 ```
 
@@ -495,5 +579,8 @@ model_comparison_plot.png
 | Dashboard shows blank cards | Ensure you are on `improvements/v2` — old master branch has this bug |
 | `index_with_labels.pt not found` | Run preprocessing (step 7.1) first |
 | FL server exits immediately | Check `--min_clients` matches the number of client processes you start |
+| FL sim starts with fewer clients than expected (PowerShell) | All `--client_indexes` paths must be on a **single line**. A line break without a trailing backtick ends the command — paths on later lines are silently dropped |
+| FedBN run overwrites FedAvg results | Pass `--save_dir server_out_fedbn --checkpoints_dir checkpoints_fedbn` to keep them separate |
+| `eval_ensemble.py` — model not found | Both `--transformer_ckpt` and `--grud_ckpt` paths must point to the `model_best.pt` inside the run's `checkpoints/` folder |
 | OOM during preprocessing | Reduce `--nprocs` (e.g. `--nprocs 2`) |
 | Tests fail | Verify venv is activated and `pip install -r requirements.txt` completed without errors |

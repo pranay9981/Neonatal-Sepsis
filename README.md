@@ -273,27 +273,35 @@ python src/split_clients.py \
 
 Add `--heterogeneous` for non-IID (skewed class distribution per hospital).
 
-**Run the simulation (automated — server + clients started automatically):**
+**Run the simulation — FedAvg (automated, server + clients started automatically):**
 
 ```bash
 python scripts/run_fl_sim.py \
-  --client_indexes \
-      data/processed/clients/client1/index.pt \
-      data/processed/clients/client2/index.pt \
-      data/processed/clients/client3/index.pt \
-      data/processed/clients/client4/index.pt \
-  --model transformer \
-  --rounds 20 \
-  --local_epochs 1
+  --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt \
+  --model grud \
+  --rounds 10 \
+  --strategy fedavg \
+  --save_dir server_out \
+  --checkpoints_dir checkpoints
 ```
 
 Output: `server_out/global_best.pt`.
 
-**Use FedBN instead of FedAvg:**
+> **Windows PowerShell note:** Pass all `--client_indexes` paths on a **single line** (no line breaks between them). A line break without a trailing backtick ends the command early — only the paths before the break get parsed.
+
+**Run the simulation — FedBN (BatchNorm params stay local, only non-BN weights are averaged):**
 
 ```bash
-python src/fl_server.py --strategy fedbn --model transformer --rounds 20
+python scripts/run_fl_sim.py \
+  --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt \
+  --model grud \
+  --rounds 10 \
+  --strategy fedbn \
+  --save_dir server_out_fedbn \
+  --checkpoints_dir checkpoints_fedbn
 ```
+
+Output: `server_out_fedbn/global_best.pt` — the `--save_dir` keeps FedBN and FedAvg results separate.
 
 </details>
 
@@ -301,22 +309,47 @@ python src/fl_server.py --strategy fedbn --model transformer --rounds 20
 <summary><strong>Step 5 — Evaluate on frozen test set</strong></summary>
 
 ```bash
-# Federated model
+# Federated GRU-D — FedAvg
 python src/evaluate.py \
   --index data/splits/test_index.pt \
   --ckpt server_out/global_best.pt \
-  --model transformer \
+  --model grud \
   --out_file eval_results_federated.json
 
-# Local baseline
+# Federated GRU-D — FedBN (if you ran the FedBN simulation)
 python src/evaluate.py \
   --index data/splits/test_index.pt \
-  --ckpt runs/<your-run>/checkpoints/model_best.pt \
+  --ckpt server_out_fedbn/global_best.pt \
+  --model grud \
+  --out_file eval_results_fedbn.json
+
+# GRU-D local baseline
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt runs/<your-grud-run>/checkpoints/model_best.pt \
+  --model grud \
+  --out_file eval_results_grud.json
+
+# Transformer local baseline
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt runs/<your-transformer-run>/checkpoints/model_best.pt \
   --model transformer \
-  --out_file eval_results_local.json
+  --out_file eval_results_transformer.json
 ```
 
-Output JSON includes: `auroc`, `auprc`, `precision`, `recall`, `f1`, `threshold`, `y_true`, `y_prob`, and 95% bootstrap CIs.
+**Ensemble evaluation (Transformer + GRU-D blended):**
+
+```bash
+python scripts/eval_ensemble.py \
+  --index data/splits/test_index.pt \
+  --transformer_ckpt runs/<your-transformer-run>/checkpoints/model_best.pt \
+  --grud_ckpt runs/<your-grud-run>/checkpoints/model_best.pt \
+  --out_file eval_results_ensemble.json \
+  --alpha 0.5
+```
+
+`--alpha` controls the Transformer blend weight (0.5 = equal; lower = more GRU-D weight). Output JSON includes: `auroc`, `auprc`, `n`, `y_true`, `y_prob`.
 
 </details>
 
@@ -402,12 +435,27 @@ streamlit run app.py
 
 ## API Server
 
-```bash
-export SEPSIS_MODEL_PATH=server_out/global_best.pt
-export SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
+Set environment variables, then start the server:
 
+```bash
+# Serve the GRU-D federated model (most common)
+export SEPSIS_MODEL_PATH=server_out/global_best.pt
+export SEPSIS_MODEL_TYPE=grud
+export SEPSIS_SCALER_PATH=data/processed/patients/scaler.json
+uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+
+# Serve the Transformer local model instead
+export SEPSIS_MODEL_PATH=runs/<your-transformer-run>/checkpoints/model_best.pt
+export SEPSIS_MODEL_TYPE=transformer
 uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+| Env var | Values | Default | Effect |
+|---|---|---|---|
+| `SEPSIS_MODEL_PATH` | any `.pt` path | `server_out/global_best.pt` | Which checkpoint to load |
+| `SEPSIS_MODEL_TYPE` | `grud` \| `transformer` | `grud` | Model architecture to instantiate |
+| `SEPSIS_MC_SAMPLES` | integer | `0` (disabled) | MC Dropout passes for confidence intervals |
+| `SEPSIS_SCALER_PATH` | path to `scaler.json` | — | Feature normalisation (recommended) |
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -415,12 +463,25 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 | `/health` | `GET` | Model version, uptime |
 | `/metrics` | `GET` | Prometheus metrics |
 
-**Example request:**
+**Example — GRU-D predict (with mask and deltas):**
 
 ```bash
 curl -X POST http://localhost:8000/v2/predict \
   -H "Content-Type: application/json" \
-  -d '{"features": [[...]]}'
+  -d '{
+    "data": [[85, 98, 37.1, ...]],
+    "mask": [[1, 1, 1, ...]],
+    "deltas": [[0, 0, 0, ...]]
+  }'
+```
+
+**Example — with MC Dropout confidence intervals (set `SEPSIS_MC_SAMPLES=50` first):**
+
+```bash
+curl -X POST http://localhost:8000/v2/predict \
+  -H "Content-Type: application/json" \
+  -d '{"data": [[85, 98, 37.1, ...]]}'
+# Response includes: probability, ci_lower, ci_upper
 ```
 
 ---
@@ -512,7 +573,8 @@ federated:
 │   └── splits/                     # Regenerated by create_splits.py
 ├── scripts/
 │   ├── run_pipeline.py             # End-to-end orchestrator
-│   ├── run_fl_sim.py               # Automated FL simulation
+│   ├── run_fl_sim.py               # Automated FL simulation (FedAvg or FedBN)
+│   ├── eval_ensemble.py            # Evaluate Transformer+GRU-D ensemble
 │   ├── create_splits.py            # Frozen 70/15/15 split
 │   ├── create_windowed_dataset.py  # Sliding-window labels
 │   ├── cross_validate.py           # 5-fold stratified CV
