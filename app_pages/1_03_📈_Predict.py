@@ -14,8 +14,11 @@ SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+import os
+
 try:
     from model import TimeSeriesTransformer
+    from model_grud import GRUD
     from config import (
         MODEL_PATH as _MODEL_PATH,
         EVAL_FEDERATED_JSON as _EVAL_FED,
@@ -25,11 +28,14 @@ try:
     )
 except Exception:
     TimeSeriesTransformer = None
+    GRUD = None
     _MODEL_PATH = "server_out/global_best.pt"
     _EVAL_FED   = "eval_results_federated.json"
     _SCALER_PATH = "data/processed/patients/scaler.json"
     N_FEATURES = 40
     SEQ_LEN = 48
+
+MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")
 
 MODEL_PATH          = Path(_MODEL_PATH)
 EVAL_FEDERATED_JSON = Path(_EVAL_FED)
@@ -95,20 +101,22 @@ for fname in FEATURE_NAMES:
 # ── Loaders ────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_model(model_path: str, n_features: int = N_FEATURES, seq_len: int = SEQ_LEN):
-    if TimeSeriesTransformer is None:
-        return None, "Could not import TimeSeriesTransformer"
     p = Path(model_path)
     if not p.exists():
         return None, f"Model file not found: {model_path}"
     try:
-        m = TimeSeriesTransformer(n_features=n_features, seq_len=seq_len)
+        if MODEL_TYPE == "grud":
+            if GRUD is None:
+                return None, "Could not import GRUD"
+            m = GRUD(n_features=n_features)
+        else:
+            if TimeSeriesTransformer is None:
+                return None, "Could not import TimeSeriesTransformer"
+            m = TimeSeriesTransformer(n_features=n_features, seq_len=seq_len)
         state = torch.load(str(p), map_location="cpu", weights_only=False)
         if isinstance(state, dict) and "model_state" in state:
             state = state["model_state"]
-        try:
-            m.load_state_dict(state)
-        except Exception:
-            m.load_state_dict(state, strict=False)
+        m.load_state_dict(state)
         m.eval()
         return m, None
     except Exception as e:
@@ -197,7 +205,12 @@ def safe_predict(model, tensor):
     try:
         model.eval()
         with torch.no_grad():
-            out = model(tensor)
+            if MODEL_TYPE == "grud":
+                mask = torch.ones_like(tensor)
+                deltas = torch.zeros_like(tensor)
+                out = model(tensor, mask, deltas)
+            else:
+                out = model(tensor)
             if isinstance(out, (list, tuple)):
                 out = out[0]
             out   = out.detach().cpu().squeeze()
@@ -207,26 +220,20 @@ def safe_predict(model, tensor):
         return None, str(e)
 
 
+def _model_forward(model, x):
+    if MODEL_TYPE == "grud":
+        mask = torch.ones_like(x)
+        deltas = torch.zeros_like(x)
+        return model(x, mask, deltas)
+    return model(x)
+
+
 def compute_feature_importance(model, tensor: torch.Tensor, scaler=None) -> Optional[np.ndarray]:
-    try:
-        import shap
-        bg_np = (
-            np.random.default_rng(42).standard_normal((20, SEQ_LEN, N_FEATURES)).astype(np.float32)
-            if scaler else np.zeros((20, SEQ_LEN, N_FEATURES), dtype=np.float32)
-        )
-        bg_tensor = torch.from_numpy(bg_np)
-        model.train()
-        e = shap.GradientExplainer(model, bg_tensor)
-        shap_values = e.shap_values(tensor)
-        model.eval()
-        return np.abs(np.array(shap_values)).mean(axis=1).squeeze()
-    except Exception:
-        pass
     try:
         x = tensor.clone().float().requires_grad_(True)
         model.eval()
         with torch.enable_grad():
-            out = model(x)
+            out = _model_forward(model, x)
             if isinstance(out, (list, tuple)):
                 out = out[0]
             out.sum().backward()
