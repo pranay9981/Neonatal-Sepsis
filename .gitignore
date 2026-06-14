@@ -67,6 +67,7 @@ results_plot.png
 *.log
 *.tmp
 mlruns/
+mlflow.db
 optuna_best_params.json
 
 # =============================================================================

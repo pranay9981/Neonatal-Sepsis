@@ -17,19 +17,15 @@ SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-try:
-    from config import EVAL_FEDERATED_JSON as _FED, EVAL_LOCAL_JSON as _LOC, PLOT_ROC_PATH as _ROC, PLOT_PRC_PATH as _PRC
-    EVAL_FEDERATED_JSON = Path(_FED)
-    EVAL_LOCAL_JSON     = Path(_LOC)
-    PLOT_ROC_PATH       = Path(_ROC)
-    PLOT_PRC_PATH       = Path(_PRC)
-except Exception:
-    EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
-    EVAL_LOCAL_JSON     = Path("eval_results_local.json")
-    PLOT_ROC_PATH       = Path("model_comparison_plot.png")
-    PLOT_PRC_PATH       = Path("model_comparison_plot_prc.png")
+ROOT = Path(__file__).resolve().parent.parent
 
-COLORS = {"fed": "#1E3A5F", "loc": "#E53935"}
+# Ordered list of eval files to discover automatically.
+# Add new entries here whenever a new model is evaluated.
+KNOWN_EVAL_FILES = [
+    ("eval_results_federated.json",    "Federated (GRU-D)",    "#1E3A5F"),
+    ("eval_results_grud.json",         "GRU-D (Local)",        "#E53935"),
+    ("eval_results_transformer.json",  "Transformer (Local)",  "#2E7D32"),
+]
 
 
 @st.cache_data
@@ -58,13 +54,10 @@ def compute_metrics(data, threshold=0.5):
     }
 
 
-def _bar(df, metric, colors):
+def _bar(df, metric, model_colors):
     fig = go.Figure()
     for _, row in df.iterrows():
-        c = colors.get(
-            "fed" if "fed" in row["Model"].lower() else "loc",
-            "#888888"
-        )
+        c = model_colors.get(row["Model"], "#888888")
         fig.add_trace(go.Bar(
             x=[row["Model"]], y=[row[metric]],
             name=row["Model"],
@@ -123,45 +116,51 @@ class MetricsPage:
         </div>
         """, unsafe_allow_html=True)
 
-        fed = load_eval(EVAL_FEDERATED_JSON)
-        loc = load_eval(EVAL_LOCAL_JSON)
+        available = {}
+        model_colors = {}
+        for fname, display_name, color in KNOWN_EVAL_FILES:
+            data = load_eval(ROOT / fname)
+            if data is not None:
+                available[display_name] = data
+                model_colors[display_name] = color
 
-        if fed is None and loc is None:
+        if not available:
             st.markdown("""
             <div style="background:#FFF3E0;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;
                  padding:16px 18px;color:#E65100;">
             <b>No evaluation results found.</b> Run the pipeline to generate them:<br><br>
             <code>python src/evaluate.py --index data/splits/test_index.pt
-                  --ckpt server_out/global_best.pt --model transformer
+                  --ckpt server_out/global_best.pt --model grud
                   --out_file eval_results_federated.json</code>
             </div>
             """, unsafe_allow_html=True)
             return
 
-        available = {}
-        if fed is not None:
-            available["Federated"] = fed
-        if loc is not None:
-            available["Local"] = loc
-
         threshold = st.slider("Classification threshold (for Accuracy / F1 / Precision / Recall)",
                               0.0, 1.0, 0.5, 0.01)
 
-        metrics_list = [compute_metrics(d, threshold) for d in available.values()]
-        df_metrics   = pd.DataFrame(metrics_list)
+        metrics_list = []
+        for display_name, data in available.items():
+            m = compute_metrics(data, threshold)
+            m["Model"] = display_name
+            metrics_list.append(m)
+        df_metrics = pd.DataFrame(metrics_list)
 
         # ── Winner callout ─────────────────────────────────────────────────
-        if len(metrics_list) == 2:
-            fed_auroc = metrics_list[0]["AUROC"]
-            loc_auroc = metrics_list[1]["AUROC"]
-            if not (np.isnan(fed_auroc) or np.isnan(loc_auroc)):
-                diff = fed_auroc - loc_auroc
+        fed_rows = df_metrics[df_metrics["Model"].str.lower().str.contains("fed")]
+        loc_rows = df_metrics[~df_metrics["Model"].str.lower().str.contains("fed")]
+        if not fed_rows.empty and not loc_rows.empty:
+            fed_auroc = fed_rows["AUROC"].iloc[0]
+            best_loc_auroc = loc_rows["AUROC"].max()
+            best_loc_name = loc_rows.loc[loc_rows["AUROC"].idxmax(), "Model"]
+            if not (np.isnan(fed_auroc) or np.isnan(best_loc_auroc)):
+                diff = fed_auroc - best_loc_auroc
                 if diff > 0:
                     st.markdown(
                         f'<div style="background:#E8F5E9;border-left:4px solid #4CAF50;'
                         f'border-radius:0 8px 8px 0;padding:12px 18px;color:#1B5E20;">'
                         f'<b>Federated model wins</b> by <b>+{diff:.3f} AUROC</b> '
-                        f'({fed_auroc:.3f} vs {loc_auroc:.3f}) — federated collaboration '
+                        f'({fed_auroc:.3f} vs {best_loc_name}: {best_loc_auroc:.3f}) — federated collaboration '
                         f'across sites generalises better than a single-site model.</div>',
                         unsafe_allow_html=True,
                     )
@@ -169,8 +168,8 @@ class MetricsPage:
                     st.markdown(
                         f'<div style="background:#FFF3E0;border-left:4px solid #FF9800;'
                         f'border-radius:0 8px 8px 0;padding:12px 18px;color:#E65100;">'
-                        f'Local model leads by <b>{-diff:.3f} AUROC</b> at this point '
-                        f'({loc_auroc:.3f} vs {fed_auroc:.3f}). '
+                        f'{best_loc_name} leads by <b>{-diff:.3f} AUROC</b> at this point '
+                        f'({best_loc_auroc:.3f} vs federated: {fed_auroc:.3f}). '
                         f'More FL rounds may close the gap.</div>',
                         unsafe_allow_html=True,
                     )
@@ -218,7 +217,7 @@ class MetricsPage:
             for row_metrics in rows:
                 cols = st.columns(len(row_metrics))
                 for col, metric in zip(cols, row_metrics):
-                    col.plotly_chart(_bar(df_metrics, metric, COLORS), use_container_width=True)
+                    col.plotly_chart(_bar(df_metrics, metric, model_colors), use_container_width=True)
 
             # Radar chart
             st.markdown("#### Normalised metric profile")
@@ -228,14 +227,13 @@ class MetricsPage:
                 rng = df_norm[col].max() - df_norm[col].min()
                 df_norm[col] = ((df_norm[col] - df_norm[col].min()) / rng) if rng != 0 else 0.5
             fig_radar = go.Figure()
-            palette = [COLORS["fed"], COLORS["loc"]]
             for i, (idx, row) in enumerate(df_norm.iterrows()):
                 fig_radar.add_trace(go.Scatterpolar(
                     r=row.values.tolist() + [row.values[0]],
                     theta=row.index.tolist() + [row.index[0]],
                     fill="toself",
                     name=idx,
-                    line=dict(color=palette[i % len(palette)], width=2),
+                    line=dict(color=model_colors.get(idx, "#888888"), width=2),
                     marker=dict(size=6),
                 ))
             fig_radar.update_layout(
@@ -254,8 +252,6 @@ class MetricsPage:
                 unsafe_allow_html=True,
             )
 
-            pal = [COLORS["fed"], COLORS["loc"]]
-
             # ── Build interactive ROC ──────────────────────────────────────
             fig_roc = go.Figure()
             fig_prc = go.Figure()
@@ -264,7 +260,7 @@ class MetricsPage:
             rng = np.random.RandomState(42)
 
             for i, (name, data) in enumerate(available.items()):
-                color = pal[i % len(pal)]
+                color = model_colors.get(name, "#888888")
                 y_t = np.array(data["y_true"])
                 y_p = np.array(data["y_prob"])
 
@@ -383,8 +379,8 @@ class MetricsPage:
             fig, axes = plt.subplots(1, n_models, figsize=(7 * n_models, 6))
             if n_models == 1:
                 axes = [axes]
-            colors_list = [COLORS["fed"], COLORS["loc"]]
-            for ax, (name, data), color in zip(axes, available.items(), colors_list):
+            for ax, (name, data) in zip(axes, available.items()):
+                color = model_colors.get(name, "#1E3A5F")
                 _confusion_ax(ax, data["y_true"], data["y_prob"],
                               title=f"{name} Model", threshold=threshold, color=color)
             plt.tight_layout()

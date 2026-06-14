@@ -252,9 +252,15 @@ class FlowerClient(fl.client.NumPyClient):
                 logger.warning("Could not set incoming parameters: %s", e)
 
         # Store global params as fixed tensors for the proximal term.
+        # Filter to only trainable parameter positions (skip buffers like x_mean)
+        # so the zip in proximal_term stays aligned with model.parameters().
         if self.mu > 0 and parameters is not None:
+            param_names = {name for name, _ in self.model.named_parameters()}
+            sd_keys = list(self.model.state_dict().keys())
             self.global_tensors = [
-                torch.tensor(p, dtype=torch.float32) for p in parameters
+                torch.tensor(arr, dtype=torch.float32)
+                for key, arr in zip(sd_keys, parameters)
+                if key in param_names
             ]
         else:
             self.global_tensors = None

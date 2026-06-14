@@ -15,7 +15,7 @@ PAGES_DIR = ROOT / "app_pages"
 
 MODEL_PATH = ROOT / "server_out" / "global_best.pt"
 EVAL_FED_PATH = ROOT / "eval_results_federated.json"
-EVAL_LOC_PATH = ROOT / "eval_results_local.json"
+EVAL_LOC_PATHS = [ROOT / "eval_results_grud.json", ROOT / "eval_results_transformer.json"]
 
 # Map: (label, filename, class_name)
 PAGES = [
@@ -195,7 +195,7 @@ with st.sidebar:
     # Status section
     model_ok = MODEL_PATH.exists()
     fed_ok   = EVAL_FED_PATH.exists()
-    loc_ok   = EVAL_LOC_PATH.exists()
+    loc_ok   = any(p.exists() for p in EVAL_LOC_PATHS)
 
     st.markdown("<div style='font-size:0.78rem; color:#9DB8D9; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:6px;'>SYSTEM STATUS</div>", unsafe_allow_html=True)
 
