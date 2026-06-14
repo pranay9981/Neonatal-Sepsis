@@ -37,6 +37,7 @@ if str(SRC_DIR) not in sys.path:
 
 from config import MODEL_PATH, SCALER_PATH, N_FEATURES, SEQ_LEN
 from model import TimeSeriesTransformer
+from model_grud import GRUD
 
 try:
     from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -51,6 +52,7 @@ _model_version: str = "unknown"
 _load_time: float = 0.0
 _start_time: float = time.time()
 
+MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")  # "transformer" or "grud"
 MC_SAMPLES = int(os.environ.get("SEPSIS_MC_SAMPLES", "0"))
 AUDIT_LOG = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(MODEL_PATH).parent / "predictions.jsonl"))
 
@@ -58,6 +60,16 @@ if _PROMETHEUS:
     _pred_counter = Counter("sepsis_predictions_total", "Total predictions served")
     _alert_counter = Counter("sepsis_alerts_total", "Total HIGH-risk alerts")
     _latency_hist = Histogram("sepsis_predict_latency_seconds", "Predict endpoint latency")
+
+
+def _pad_or_trim(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
+    T, F = target_shape
+    if arr.shape[0] < T:
+        pad = np.zeros((T - arr.shape[0], F), dtype=np.float32)
+        arr = np.concatenate([pad, arr], axis=0)
+    elif arr.shape[0] > T:
+        arr = arr[-T:]
+    return arr
 
 
 def _load_artifacts():
@@ -68,7 +80,10 @@ def _load_artifacts():
     raw = torch.load(str(p), map_location="cpu", weights_only=False)
     if isinstance(raw, dict) and "model_state" in raw:
         raw = raw["model_state"]
-    m = TimeSeriesTransformer(n_features=N_FEATURES, seq_len=SEQ_LEN)
+    if MODEL_TYPE == "grud":
+        m = GRUD(n_features=N_FEATURES)
+    else:
+        m = TimeSeriesTransformer(n_features=N_FEATURES, seq_len=SEQ_LEN)
     try:
         m.load_state_dict(raw)
     except Exception:
@@ -109,6 +124,10 @@ app = FastAPI(
 class PredictRequest(BaseModel):
     data: List[List[float]]
     patient_id: Optional[str] = None
+    # GRU-D mode: binary observation mask and time-gap deltas (same shape as data).
+    # If omitted when MODEL_TYPE=="grud", defaults to all-observed / zero-gap.
+    mask: Optional[List[List[float]]] = None
+    deltas: Optional[List[List[float]]] = None
 
     @field_validator("data")
     @classmethod
@@ -169,20 +188,32 @@ def predict(req: PredictRequest):
         std = np.array(_scaler["std"], dtype=np.float32)
         arr = (arr - mean) / (std + 1e-8)
 
-    tensor = torch.tensor(arr).unsqueeze(0)
+    tensor = torch.tensor(arr).unsqueeze(0)  # (1, T, F)
+
+    # Build extra tensors for GRU-D
+    if MODEL_TYPE == "grud":
+        mask_arr = np.ones_like(arr) if req.mask is None else _pad_or_trim(np.array(req.mask, dtype=np.float32), arr.shape)
+        delta_arr = np.zeros_like(arr) if req.deltas is None else _pad_or_trim(np.array(req.deltas, dtype=np.float32), arr.shape)
+        mask_t = torch.tensor(mask_arr).unsqueeze(0)
+        delta_t = torch.tensor(delta_arr).unsqueeze(0)
+
+    def _forward():
+        if MODEL_TYPE == "grud":
+            return _model(tensor, mask_t, delta_t)
+        return _model(tensor)
 
     prob_low = prob_high = None
     with torch.no_grad():
         if MC_SAMPLES > 1:
             with _mc_lock:
-                _model.train()  # enable dropout for MC sampling
-                mc_probs = [float(torch.sigmoid(_model(tensor)).squeeze()) for _ in range(MC_SAMPLES)]
+                _model.train()
+                mc_probs = [float(torch.sigmoid(_forward()).squeeze()) for _ in range(MC_SAMPLES)]
                 _model.eval()
             prob = float(np.mean(mc_probs))
             prob_low = float(np.percentile(mc_probs, 2.5))
             prob_high = float(np.percentile(mc_probs, 97.5))
         else:
-            logit = _model(tensor).squeeze()
+            logit = _forward().squeeze()
             prob = float(torch.sigmoid(logit).item())
 
     risk = "HIGH" if prob >= 0.5 else ("MODERATE" if prob >= 0.25 else "LOW")
