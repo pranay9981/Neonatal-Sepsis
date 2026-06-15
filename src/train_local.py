@@ -113,11 +113,11 @@ def calibrate_threshold(val_logits, val_y):
     return float(thresholds[int(np.argmax(j_valid))])
 
 
-def build_model_from_sample(sample_X, model_name):
+def build_model_from_sample(sample_X, model_name, hidden_size=128, dropout=0.1):
     if model_name == "transformer":
         return TimeSeriesTransformer(n_features=sample_X.shape[1], seq_len=sample_X.shape[0])
     elif model_name == "grud":
-        return GRUD(n_features=sample_X.shape[1], hidden_size=128)
+        return GRUD(n_features=sample_X.shape[1], hidden_size=hidden_size, dropout=dropout)
     else:
         raise ValueError("Unknown model: " + model_name)
 
@@ -249,6 +249,8 @@ def train(
     scaler_path: str | None = None,
     augment: bool = False,
     use_temperature_scaling: bool = False,
+    hidden_size: int = 128,
+    dropout: float = 0.1,
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -317,7 +319,7 @@ def train(
 
     sample = ds[0]
     sample_X = sample[0]
-    model = build_model_from_sample(sample_X, model_name).to(device)
+    model = build_model_from_sample(sample_X, model_name, hidden_size=hidden_size, dropout=dropout).to(device)
 
     # For GRU-D: load empirical mean so the decay targets the training distribution.
     if model_name == "grud":
@@ -495,6 +497,8 @@ if __name__ == "__main__":
     ap.add_argument("--scaler_path", type=str, default=None, help="Path to scaler.json for feature normalisation")
     ap.add_argument("--augment", action="store_true", help="Enable on-the-fly Gaussian jitter augmentation")
     ap.add_argument("--use_temperature_scaling", action="store_true", help="Apply temperature scaling after training")
+    ap.add_argument("--hidden_size", type=int, default=128, help="GRU-D hidden size (ignored for transformer)")
+    ap.add_argument("--dropout", type=float, default=0.1, help="GRU-D dropout rate (ignored for transformer)")
     args = ap.parse_args()
 
     train(
@@ -517,4 +521,6 @@ if __name__ == "__main__":
         scaler_path=args.scaler_path,
         augment=args.augment,
         use_temperature_scaling=args.use_temperature_scaling,
+        hidden_size=args.hidden_size,
+        dropout=args.dropout,
     )

@@ -1,0 +1,41 @@
+# Large data files — all mounted as volumes at runtime
+data/
+runs/
+server_out/
+server_out_fedbn/
+checkpoints/
+checkpoints_fedbn/
+
+# MLflow artifacts
+mlruns/
+mlflow.db
+
+# Eval results — mounted as volumes at runtime
+eval_results_*.json
+cv_results.json
+optuna_results_grud.json
+
+# Generated plots
+*.png
+
+# Python env and cache
+.venv/
+.venv1/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Git
+.git/
+
+# Dev tools
+.vscode/
+.devcontainer/
+
+# Logs
+*.log
+
+# Misc
+hyper_results/

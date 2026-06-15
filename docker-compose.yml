@@ -8,13 +8,16 @@ services:
     volumes:
       - ./data:/app/data
       - ./server_out:/app/server_out
+      - ./server_out_fedbn:/app/server_out_fedbn
       - ./runs:/app/runs
+      - ./eval_results_transformer.json:/app/eval_results_transformer.json
+      - ./eval_results_grud.json:/app/eval_results_grud.json
       - ./eval_results_federated.json:/app/eval_results_federated.json
-      - ./eval_results_local.json:/app/eval_results_local.json
-      - ./model_comparison_plot.png:/app/model_comparison_plot.png
-      - ./model_comparison_plot_prc.png:/app/model_comparison_plot_prc.png
+      - ./eval_results_ensemble.json:/app/eval_results_ensemble.json
+      - ./eval_results_fedbn.json:/app/eval_results_fedbn.json
     environment:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
+      - SEPSIS_MODEL_TYPE=grud
       - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json
 
   api:
@@ -27,4 +30,5 @@ services:
       - ./server_out:/app/server_out
     environment:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
+      - SEPSIS_MODEL_TYPE=grud
       - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json
