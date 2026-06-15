@@ -165,7 +165,7 @@ class TrainingRunsPage:
                 legend=dict(x=0.01, y=0.99),
                 margin=dict(t=20, b=40),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             with st.expander("Raw metrics CSV"):
                 st.dataframe(mdf, use_container_width=True)

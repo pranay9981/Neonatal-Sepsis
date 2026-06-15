@@ -610,7 +610,7 @@ class PredictPage:
                         },
                     ))
                     fig_gauge.update_layout(height=280, margin=dict(t=40, b=10, l=20, r=20))
-                    st.plotly_chart(fig_gauge, use_container_width=True)
+                    st.plotly_chart(fig_gauge, width='stretch')
 
                 with col_info:
                     st.markdown(
@@ -686,7 +686,7 @@ class PredictPage:
                             height=420, margin=dict(l=20, r=20, t=50, b=40),
                             font=dict(family="Inter, Segoe UI, sans-serif"),
                         )
-                        st.plotly_chart(fig_imp, use_container_width=True)
+                        st.plotly_chart(fig_imp, width='stretch')
                     else:
                         st.warning("Feature importance could not be computed for this input.")
 
@@ -700,7 +700,7 @@ class PredictPage:
                     if eval_data:
                         st.plotly_chart(
                             plot_threshold_sensitivity(eval_data["y_true"], eval_data["y_prob"], threshold),
-                            use_container_width=True,
+                            width='stretch',
                         )
                     else:
                         st.info("Run evaluation first to enable this chart.")

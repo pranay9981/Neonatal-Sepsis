@@ -219,7 +219,7 @@ class MetricsPage:
             for row_metrics in rows:
                 cols = st.columns(len(row_metrics))
                 for col, metric in zip(cols, row_metrics):
-                    col.plotly_chart(_bar(df_metrics, metric, model_colors), use_container_width=True)
+                    col.plotly_chart(_bar(df_metrics, metric, model_colors), width='stretch')
 
             # Radar chart
             st.markdown("#### Normalised metric profile")
@@ -244,7 +244,7 @@ class MetricsPage:
                 margin=dict(t=40, b=20),
                 font=dict(family="Inter, Segoe UI, sans-serif"),
             )
-            st.plotly_chart(fig_radar, use_container_width=True)
+            st.plotly_chart(fig_radar, width='stretch')
 
         with tab2:
             st.markdown("#### ROC and Precision-Recall curves")
@@ -356,8 +356,8 @@ class MetricsPage:
             )
 
             col1, col2 = st.columns(2)
-            col1.plotly_chart(fig_roc, use_container_width=True)
-            col2.plotly_chart(fig_prc, use_container_width=True)
+            col1.plotly_chart(fig_roc, width='stretch')
+            col2.plotly_chart(fig_prc, width='stretch')
 
             st.markdown("""
             <div style="background:#E3F2FD;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;
