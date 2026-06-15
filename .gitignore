@@ -46,7 +46,9 @@ hyper_results/
 checkpoints/
 server_out/*
 server_out_fedbn/*
+server_out_noniid/*
 checkpoints_fedbn/*
+checkpoints_noniid/*
 
 # =============================================================================
 # Model Files
