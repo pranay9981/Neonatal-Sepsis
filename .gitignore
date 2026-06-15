@@ -71,6 +71,8 @@ results_plot.png
 mlruns/
 mlflow.db
 optuna_best_params.json
+optuna_results_grud.json
+cv_results.json
 
 # =============================================================================
 # Exceptions — always track these even if parent folder is ignored
