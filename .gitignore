@@ -47,8 +47,10 @@ checkpoints/
 server_out/*
 server_out_fedbn/*
 server_out_noniid/*
+server_out_transformer/*
 checkpoints_fedbn/*
 checkpoints_noniid/*
+checkpoints_transformer/*
 
 # =============================================================================
 # Model Files

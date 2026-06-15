@@ -288,6 +288,33 @@ python scripts/run_fl_sim.py --client_indexes data/processed/clients/client1/ind
 
 Output: `server_out_fedbn/global_best.pt`.
 
+#### Run the FL simulation — Federated Transformer
+
+The Transformer can be trained federatedly the same way as GRU-D. Use a separate `--save_dir` to keep results independent.
+
+```bash
+python scripts/run_fl_sim.py \
+  --model transformer \
+  --rounds 10 \
+  --local_epochs 2 \
+  --batch_size 32 \
+  --save_dir server_out_transformer \
+  --checkpoints_dir checkpoints_transformer \
+  --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt
+```
+
+Evaluate after the run completes:
+
+```bash
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_transformer/global_best.pt \
+  --model transformer \
+  --out_file eval_results_transformer_fl.json
+```
+
+Output: `server_out_transformer/global_best.pt`. Expected AUROC ~0.90 — slightly below local Transformer (0.9092), a small FL penalty.
+
 #### Run the FL simulation — Non-IID (heterogeneous hospital data)
 
 In real deployments, hospitals have different patient populations — some see far more sepsis cases than others. The `--heterogeneous` flag simulates this by skewing the class distribution across clients. Always use a separate `--out_root` and `--save_dir` to keep results independent from the IID run.
@@ -364,6 +391,13 @@ python src/evaluate.py \
   --ckpt server_out_noniid/global_best.pt \
   --model grud \
   --out_file eval_results_noniid.json
+
+# Federated Transformer (if you ran the Transformer FL simulation)
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_transformer/global_best.pt \
+  --model transformer \
+  --out_file eval_results_transformer_fl.json
 
 # GRU-D local baseline
 python src/evaluate.py \
@@ -636,12 +670,17 @@ server_out_noniid/          FedAvg non-IID results
   global_best.pt            best federated model (FedAvg, non-IID)
   checkpoints_noniid/       per-round non-IID checkpoints
 
+server_out_transformer/     Federated Transformer results
+  global_best.pt            best federated Transformer model
+  checkpoints_transformer/  per-round Transformer checkpoints
+
 eval_results_federated.json      FedAvg IID GRU-D test-set results  (AUROC 0.9238)
 eval_results_fedbn.json          FedBN IID GRU-D test-set results   (AUROC 0.9051)
-eval_results_noniid.json         FedAvg non-IID GRU-D results       (AUROC 0.8306)
-eval_results_grud.json           GRU-D local test-set results       (AUROC 0.9189)
-eval_results_transformer.json    Transformer local test-set results  (AUROC 0.9092)
-eval_results_ensemble.json       Ensemble (Transformer+GRU-D)       (AUROC 0.9293)
+eval_results_noniid.json         FedAvg non-IID GRU-D results           (AUROC 0.8306)
+eval_results_transformer_fl.json Federated Transformer results          (AUROC 0.9018)
+eval_results_grud.json           GRU-D local test-set results           (AUROC 0.9189)
+eval_results_transformer.json    Transformer local test-set results      (AUROC 0.9092)
+eval_results_ensemble.json       Ensemble (Transformer+GRU-D)           (AUROC 0.9293)
 model_comparison_plot.png
 ```
 

@@ -303,6 +303,17 @@ python scripts/run_fl_sim.py \
 
 Output: `server_out_fedbn/global_best.pt`.
 
+**Run the simulation — Federated Transformer:**
+
+```bash
+python scripts/run_fl_sim.py \
+  --client_indexes data/processed/clients/client1/index.pt data/processed/clients/client2/index.pt data/processed/clients/client3/index.pt data/processed/clients/client4/index.pt data/processed/clients/client5/index.pt \
+  --model transformer --rounds 10 --strategy fedavg \
+  --save_dir server_out_transformer --checkpoints_dir checkpoints_transformer
+```
+
+Output: `server_out_transformer/global_best.pt`. Expected AUROC ~0.90 (small FL penalty vs local 0.9092).
+
 **Run the simulation — Non-IID (heterogeneous hospital data):**
 
 Simulates realistic deployments where hospitals have different patient distributions. Creates client splits where sepsis prevalence varies significantly across clients, then runs FedAvg on those skewed partitions.
@@ -354,6 +365,13 @@ python src/evaluate.py \
   --ckpt server_out_noniid/global_best.pt \
   --model grud \
   --out_file eval_results_noniid.json
+
+# Federated Transformer
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_transformer/global_best.pt \
+  --model transformer \
+  --out_file eval_results_transformer_fl.json
 
 # GRU-D local baseline
 python src/evaluate.py \

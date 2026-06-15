@@ -22,12 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # Ordered list of eval files to discover automatically.
 # Add new entries here whenever a new model is evaluated.
 KNOWN_EVAL_FILES = [
-    ("eval_results_federated.json",    "Federated GRU-D (FedAvg, IID)",    "#1E3A5F"),
-    ("eval_results_noniid.json",       "Federated GRU-D (FedAvg, non-IID)", "#FF6F00"),
-    ("eval_results_fedbn.json",        "Federated GRU-D (FedBN)",          "#0277BD"),
-    ("eval_results_grud.json",         "GRU-D (Local)",                    "#E53935"),
-    ("eval_results_transformer.json",  "Transformer (Local)",              "#2E7D32"),
-    ("eval_results_ensemble.json",     "Ensemble",                         "#6A1B9A"),
+    ("eval_results_federated.json",       "Federated GRU-D (FedAvg, IID)",    "#1E3A5F"),
+    ("eval_results_noniid.json",          "Federated GRU-D (FedAvg, non-IID)", "#FF6F00"),
+    ("eval_results_fedbn.json",           "Federated GRU-D (FedBN)",          "#0277BD"),
+    ("eval_results_transformer_fl.json",  "Federated Transformer (FedAvg)",   "#00695C"),
+    ("eval_results_grud.json",            "GRU-D (Local)",                    "#E53935"),
+    ("eval_results_transformer.json",     "Transformer (Local)",              "#2E7D32"),
+    ("eval_results_ensemble.json",        "Ensemble",                         "#6A1B9A"),
 ]
 
 
