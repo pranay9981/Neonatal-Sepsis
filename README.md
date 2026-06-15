@@ -301,7 +301,32 @@ python scripts/run_fl_sim.py \
   --checkpoints_dir checkpoints_fedbn
 ```
 
-Output: `server_out_fedbn/global_best.pt` — the `--save_dir` keeps FedBN and FedAvg results separate.
+Output: `server_out_fedbn/global_best.pt`.
+
+**Run the simulation — Non-IID (heterogeneous hospital data):**
+
+Simulates realistic deployments where hospitals have different patient distributions. Creates client splits where sepsis prevalence varies significantly across clients, then runs FedAvg on those skewed partitions.
+
+```bash
+# Step 1 — non-IID split (positives concentrated in early clients)
+python src/split_clients.py \
+  --processed_folder data/processed/patients \
+  --out_root data/processed/clients_noniid \
+  --n_clients 5 \
+  --splits_dir data/splits \
+  --heterogeneous
+
+# Step 2 — FL simulation (separate output dir)
+python scripts/run_fl_sim.py \
+  --client_indexes data/processed/clients_noniid/client1/index.pt data/processed/clients_noniid/client2/index.pt data/processed/clients_noniid/client3/index.pt data/processed/clients_noniid/client4/index.pt data/processed/clients_noniid/client5/index.pt \
+  --model grud \
+  --rounds 10 \
+  --strategy fedavg \
+  --save_dir server_out_noniid \
+  --checkpoints_dir checkpoints_noniid
+```
+
+Output: `server_out_noniid/global_best.pt`. Expected AUROC ~0.83 vs ~0.92 for IID — the gap quantifies the non-IID penalty.
 
 </details>
 
@@ -316,12 +341,19 @@ python src/evaluate.py \
   --model grud \
   --out_file eval_results_federated.json
 
-# Federated GRU-D — FedBN (if you ran the FedBN simulation)
+# Federated GRU-D — FedBN
 python src/evaluate.py \
   --index data/splits/test_index.pt \
   --ckpt server_out_fedbn/global_best.pt \
   --model grud \
   --out_file eval_results_fedbn.json
+
+# Federated GRU-D — non-IID
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_noniid/global_best.pt \
+  --model grud \
+  --out_file eval_results_noniid.json
 
 # GRU-D local baseline
 python src/evaluate.py \
@@ -373,23 +405,46 @@ Produces ROC and PRC curves with bootstrap CI bands for all models.
 ### 5-Fold Cross-Validation
 
 ```bash
+# GRU-D (best single model — confirmed AUROC 0.9192 ± 0.0044 across 5 folds)
+python scripts/cross_validate.py \
+  --index data/splits/train_index.pt \
+  --model grud \
+  --epochs 20 \
+  --out_file cv_results.json
+
+# Transformer
 python scripts/cross_validate.py \
   --index data/splits/train_index.pt \
   --model transformer \
-  --epochs 20
+  --epochs 20 \
+  --out_file cv_results_transformer.json
 ```
 
-Reports mean ± std AUROC and AUPRC across folds with bootstrap CIs.
+Reports mean ± std AUROC and AUPRC across folds with 95% bootstrap CIs. Low std confirms the test score is not a lucky split.
 
 ### Bayesian Hyperparameter Search
 
 ```bash
+# Quick search (~1-2 hrs)
 python scripts/optuna_search.py \
+  --model grud \
   --index data/splits/train_index.pt \
-  --n_trials 50
+  --n_trials 20 \
+  --epochs 5 \
+  --out_file optuna_results_grud.json
+
+# Full search (~4-6 hrs)
+python scripts/optuna_search.py \
+  --model grud \
+  --index data/splits/train_index.pt \
+  --n_trials 50 \
+  --epochs 20 \
+  --out_file optuna_results_grud.json
 ```
 
-Searches `lr`, `d_model`, `n_heads`, `dropout`, `batch_size` using TPE + median pruner. Best params saved to `optuna_best_params.json`.
+Searches `lr`, `hidden_size`, `dropout`, `batch_size` using TPE sampler + median pruner. Best params printed and saved to `--out_file`.
+
+Our best params (20 trials): `lr=0.000233`, `batch_size=32`, `hidden_size=256`, `dropout=0.110`, best val AUROC 0.9225.
 
 ### Early-Warning Sliding-Window Dataset
 
@@ -489,19 +544,26 @@ curl -X POST http://localhost:8000/v2/predict \
 ## Docker
 
 ```bash
-# Build
+# Build (~3-5 min; subsequent builds use cached pip layer)
 docker build -t neonatal-sepsis .
 
-# Run API server
-docker run -p 8000:8000 \
-  -v $(pwd)/server_out:/app/server_out:ro \
-  neonatal-sepsis
+# Run API server only
+docker run --rm -p 8000:8000 \
+  -v ${PWD}/server_out:/app/server_out \
+  -e SEPSIS_MODEL_PATH=/app/server_out/global_best.pt \
+  -e SEPSIS_MODEL_TYPE=grud \
+  neonatal-sepsis uvicorn src.api:app --host 0.0.0.0 --port 8000
 
-# API + dashboard together
+# Test the API
+curl http://localhost:8000/health
+
+# Run API + dashboard together
 docker-compose up
 ```
 
-The Dockerfile uses a multi-stage build (builder + slim runtime) and runs as a non-root user (uid=1000) with a `/health` HEALTHCHECK.
+> **Windows PowerShell:** Use `${PWD}` (not `$(pwd)`) for the volume mount.
+
+The Dockerfile uses a multi-stage build (builder + slim runtime) and runs as a non-root user (uid=1000) with a `/health` HEALTHCHECK. A `.dockerignore` keeps the build context under 1 MB by excluding `data/`, `runs/`, `.venv/`, and other large local directories.
 
 ---
 

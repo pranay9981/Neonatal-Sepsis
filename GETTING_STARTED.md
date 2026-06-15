@@ -288,6 +288,40 @@ python scripts/run_fl_sim.py --client_indexes data/processed/clients/client1/ind
 
 Output: `server_out_fedbn/global_best.pt`.
 
+#### Run the FL simulation — Non-IID (heterogeneous hospital data)
+
+In real deployments, hospitals have different patient populations — some see far more sepsis cases than others. The `--heterogeneous` flag simulates this by skewing the class distribution across clients. Always use a separate `--out_root` and `--save_dir` to keep results independent from the IID run.
+
+```bash
+# Step 1 — Create non-IID splits (positives concentrated in early clients)
+python src/split_clients.py \
+  --processed_folder data/processed/patients \
+  --out_root data/processed/clients_noniid \
+  --n_clients 5 \
+  --splits_dir data/splits \
+  --heterogeneous
+```
+
+You will see skewed per-client positive rates printed (e.g. client 1 ~high %, client 5 ~low %).
+
+```bash
+# Step 2 — Run FL simulation
+python scripts/run_fl_sim.py --client_indexes data/processed/clients_noniid/client1/index.pt data/processed/clients_noniid/client2/index.pt data/processed/clients_noniid/client3/index.pt data/processed/clients_noniid/client4/index.pt data/processed/clients_noniid/client5/index.pt --model grud --rounds 10 --strategy fedavg --save_dir server_out_noniid --checkpoints_dir checkpoints_noniid
+```
+
+Output: `server_out_noniid/global_best.pt`.
+
+```bash
+# Step 3 — Evaluate
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_noniid/global_best.pt \
+  --model grud \
+  --out_file eval_results_noniid.json
+```
+
+Expected result: **AUROC ~0.83** (vs ~0.92 for IID FedAvg). The gap is the non-IID penalty — skewed distributions cause gradient divergence during aggregation. The loss curve will also be more volatile (oscillating rather than monotonically decreasing).
+
 #### Run manually (separate terminals)
 
 ```bash
@@ -323,6 +357,13 @@ python src/evaluate.py \
   --ckpt server_out_fedbn/global_best.pt \
   --model grud \
   --out_file eval_results_fedbn.json
+
+# Federated GRU-D — non-IID (if you ran the non-IID simulation)
+python src/evaluate.py \
+  --index data/splits/test_index.pt \
+  --ckpt server_out_noniid/global_best.pt \
+  --model grud \
+  --out_file eval_results_noniid.json
 
 # GRU-D local baseline
 python src/evaluate.py \
@@ -384,25 +425,48 @@ Produces side-by-side ROC and PRC curves with bootstrap confidence bands.
 ### 5-fold cross-validation
 
 ```bash
+# GRU-D (best single model — AUROC 0.9192 ± 0.0044 on 5 folds)
+python scripts/cross_validate.py \
+  --index data/splits/train_index.pt \
+  --model grud \
+  --epochs 20 \
+  --out_file cv_results.json
+
+# Transformer
 python scripts/cross_validate.py \
   --index data/splits/train_index.pt \
   --model transformer \
-  --epochs 20
+  --epochs 20 \
+  --out_file cv_results_transformer.json
 ```
 
-Reports mean ± std AUROC and AUPRC across 5 folds.
+Reports mean ± std AUROC and AUPRC across 5 folds with 95% bootstrap CIs. Results are saved to the specified `--out_file`.
 
 ---
 
 ### Bayesian hyperparameter search (Optuna)
 
 ```bash
+# Quick search — 20 trials, 5 epochs per trial (~1-2 hrs)
 python scripts/optuna_search.py \
+  --model grud \
   --index data/splits/train_index.pt \
-  --n_trials 50
+  --n_trials 20 \
+  --epochs 5 \
+  --out_file optuna_results_grud.json
+
+# Full search — 50 trials, more epochs (~4-6 hrs)
+python scripts/optuna_search.py \
+  --model grud \
+  --index data/splits/train_index.pt \
+  --n_trials 50 \
+  --epochs 20 \
+  --out_file optuna_results_grud.json
 ```
 
-Searches `lr`, `d_model`, `n_heads`, `dropout`, `batch_size`. Best trial is printed and saved to `optuna_best_params.json`.
+Searches `lr`, `hidden_size`, `dropout`, `batch_size` using TPE sampler + median pruner. Best params are printed and saved to `--out_file`.
+
+Our best params (20 trials, 5 epochs): `lr=0.000233`, `batch_size=32`, `hidden_size=256`, `dropout=0.110` — best val AUROC 0.9225.
 
 ---
 
@@ -506,17 +570,26 @@ Key endpoints:
 ## Docker
 
 ```bash
-# Build the image
+# Build the image (~3-5 min on first build; subsequent builds use cached layers)
 docker build -t neonatal-sepsis .
 
-# Run the API server
-docker run -p 8000:8000 \
-  -v $(pwd)/server_out:/app/server_out:ro \
-  neonatal-sepsis
+# Run the API server only
+docker run --rm -p 8000:8000 \
+  -v ${PWD}/server_out:/app/server_out \
+  -e SEPSIS_MODEL_PATH=/app/server_out/global_best.pt \
+  -e SEPSIS_MODEL_TYPE=grud \
+  neonatal-sepsis uvicorn src.api:app --host 0.0.0.0 --port 8000
 
-# Or run API + dashboard together
+# Test it (in a second terminal)
+curl http://localhost:8000/health
+
+# Run API + dashboard together (reads docker-compose.yml)
 docker-compose up
 ```
+
+> **Windows PowerShell:** Use `${PWD}` for the volume mount path (not `$(pwd)`).
+
+The image uses a multi-stage build and runs as a non-root user (uid=1000). A `.dockerignore` excludes `data/`, `runs/`, `.venv/`, and other large local directories — keeping the build context under 1 MB.
 
 ---
 
@@ -551,19 +624,24 @@ runs/
     checkpoints/model_best.pt
     logs/
 
-server_out/                 FedAvg results
-  global_best.pt            best federated model (FedAvg)
+server_out/                 FedAvg IID results
+  global_best.pt            best federated model (FedAvg, IID)
   checkpoints/              per-round checkpoints
 
-server_out_fedbn/           FedBN results (if you ran the FedBN simulation)
+server_out_fedbn/           FedBN IID results
   global_best.pt            best federated model (FedBN)
   checkpoints_fedbn/        per-round FedBN checkpoints
 
-eval_results_federated.json      FedAvg GRU-D test-set results
-eval_results_fedbn.json          FedBN GRU-D test-set results
-eval_results_grud.json           GRU-D local test-set results
-eval_results_transformer.json    Transformer local test-set results
-eval_results_ensemble.json       Ensemble (Transformer+GRU-D) test-set results
+server_out_noniid/          FedAvg non-IID results
+  global_best.pt            best federated model (FedAvg, non-IID)
+  checkpoints_noniid/       per-round non-IID checkpoints
+
+eval_results_federated.json      FedAvg IID GRU-D test-set results  (AUROC 0.9238)
+eval_results_fedbn.json          FedBN IID GRU-D test-set results   (AUROC 0.9051)
+eval_results_noniid.json         FedAvg non-IID GRU-D results       (AUROC 0.8306)
+eval_results_grud.json           GRU-D local test-set results       (AUROC 0.9189)
+eval_results_transformer.json    Transformer local test-set results  (AUROC 0.9092)
+eval_results_ensemble.json       Ensemble (Transformer+GRU-D)       (AUROC 0.9293)
 model_comparison_plot.png
 ```
 
@@ -584,3 +662,6 @@ model_comparison_plot.png
 | `eval_ensemble.py` — model not found | Both `--transformer_ckpt` and `--grud_ckpt` paths must point to the `model_best.pt` inside the run's `checkpoints/` folder |
 | OOM during preprocessing | Reduce `--nprocs` (e.g. `--nprocs 2`) |
 | Tests fail | Verify venv is activated and `pip install -r requirements.txt` completed without errors |
+| Non-IID AUROC is ~0.09 lower than IID | Expected — skewed client distributions cause gradient divergence. Try more rounds or stronger FedProx `--mu`. |
+| Docker build context is large (several GB) | Ensure `.dockerignore` is present in the project root — it excludes `data/`, `runs/`, `.venv/` etc. |
+| `docker run` — permission denied on uvicorn | Packages must be installed into the non-root user's home. Rebuild after pulling the latest Dockerfile. |
