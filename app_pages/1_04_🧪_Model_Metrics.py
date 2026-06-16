@@ -29,6 +29,8 @@ KNOWN_EVAL_FILES = [
     ("eval_results_grud.json",            "GRU-D (Local)",                    "#E53935"),
     ("eval_results_transformer.json",     "Transformer (Local)",              "#2E7D32"),
     ("eval_results_ensemble.json",        "Ensemble",                         "#6A1B9A"),
+    # Early-warning task (different from patient-level above): 12h window → predict sepsis in next 6h
+    ("eval_results_windowed_grud.json",   "GRU-D Windowed (Early Warning, 6h)", "#795548"),
 ]
 
 
