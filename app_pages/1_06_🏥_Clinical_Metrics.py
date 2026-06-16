@@ -26,14 +26,14 @@ ROOT = Path(__file__).parent.parent
 
 # (filename, display_name, color, calibrated_threshold)
 KNOWN_EVAL_FILES = [
-    ("eval_results_federated.json",      "Federated GRU-D (FedAvg, IID)",      "#1E3A5F", 0.35),
-    ("eval_results_noniid.json",         "Federated GRU-D (FedAvg, non-IID)",  "#FF6F00", 0.35),
-    ("eval_results_fedbn.json",          "Federated GRU-D (FedBN)",            "#0277BD", 0.35),
-    ("eval_results_transformer_fl.json", "Federated Transformer (FedAvg)",     "#00695C", 0.35),
-    ("eval_results_grud.json",           "GRU-D (Local)",                      "#E53935", 0.3539),
-    ("eval_results_transformer.json",    "Transformer (Local)",                "#2E7D32", 0.3397),
-    ("eval_results_ensemble.json",       "Ensemble",                           "#6A1B9A", 0.35),
-    ("eval_results_windowed_grud.json",  "GRU-D Windowed (Early Warning, 6h)", "#795548", 0.2294),
+    ("eval_results_federated.json",      "Federated GRU-D (FedAvg, IID)",      "#3B82F6", 0.35),
+    ("eval_results_noniid.json",         "Federated GRU-D (FedAvg, non-IID)",  "#F59E0B", 0.35),
+    ("eval_results_fedbn.json",          "Federated GRU-D (FedBN)",            "#06B6D4", 0.35),
+    ("eval_results_transformer_fl.json", "Federated Transformer (FedAvg)",     "#10B981", 0.35),
+    ("eval_results_grud.json",           "GRU-D (Local)",                      "#EF4444", 0.3539),
+    ("eval_results_transformer.json",    "Transformer (Local)",                "#8B5CF6", 0.3397),
+    ("eval_results_ensemble.json",       "Ensemble",                           "#EC4899", 0.35),
+    ("eval_results_windowed_grud.json",  "GRU-D Windowed (Early Warning, 6h)", "#A78BFA", 0.2294),
 ]
 
 
@@ -49,36 +49,41 @@ def _load(path: str):
         return None
 
 
-def _info_card(title, what_it_measures, why_it_matters, good_value, color="#1E3A5F"):
+def _info_card(title, what_it_measures, why_it_matters, good_value, accent="#3B82F6"):
     return f"""
-    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;
-         padding:16px 18px;margin:8px 0;border-top:3px solid {color};">
-      <div style="font-size:1rem;font-weight:700;color:{color};margin-bottom:8px;">{title}</div>
+    <div style="background:#141827; border:1px solid #1E2A45; border-radius:10px;
+         padding:16px 18px; margin:8px 0; border-top:3px solid {accent};
+         box-sizing:border-box;">
+      <div style="font-size:1rem; font-weight:700; color:#F1F5F9; margin-bottom:8px;">{title}</div>
       <div style="margin-bottom:6px;">
-        <span style="font-size:0.78rem;font-weight:600;color:#64748B;text-transform:uppercase;
+        <span style="font-size:0.78rem; font-weight:600; color:#475569; text-transform:uppercase;
               letter-spacing:0.4px;">What it measures</span><br>
-        <span style="font-size:0.86rem;color:#334155;">{what_it_measures}</span>
+        <span style="font-size:0.86rem; color:#94A3B8;">{what_it_measures}</span>
       </div>
       <div style="margin-bottom:6px;">
-        <span style="font-size:0.78rem;font-weight:600;color:#64748B;text-transform:uppercase;
+        <span style="font-size:0.78rem; font-weight:600; color:#475569; text-transform:uppercase;
               letter-spacing:0.4px;">Why it matters clinically</span><br>
-        <span style="font-size:0.86rem;color:#334155;">{why_it_matters}</span>
+        <span style="font-size:0.86rem; color:#94A3B8;">{why_it_matters}</span>
       </div>
       <div>
-        <span style="font-size:0.78rem;font-weight:600;color:#64748B;text-transform:uppercase;
+        <span style="font-size:0.78rem; font-weight:600; color:#475569; text-transform:uppercase;
               letter-spacing:0.4px;">What "good" looks like</span><br>
-        <span style="font-size:0.86rem;font-weight:600;color:{color};">{good_value}</span>
+        <span style="font-size:0.86rem; font-weight:600; color:{accent};">{good_value}</span>
       </div>
     </div>"""
 
 
-def _metric_display(value, label, sub=None, color="#1E3A5F"):
-    sub_html = f'<div style="font-size:0.78rem;color:#64748B;margin-top:4px;">{sub}</div>' if sub else ""
+def _metric_display(value, label, sub=None, accent="#3B82F6"):
+    sub_html = (
+        f'<div style="font-size:0.78rem; color:#475569; margin-top:4px;">{sub}</div>'
+        if sub else ""
+    )
     return f"""
-    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;
-         padding:18px 16px;text-align:center;border-top:3px solid {color};">
-      <div style="font-size:1.8rem;font-weight:700;color:{color};line-height:1;">{value}</div>
-      <div style="font-size:0.78rem;color:#64748B;margin-top:6px;text-transform:uppercase;
+    <div style="background:#141827; border:1px solid #1E2A45; border-radius:10px;
+         padding:18px 16px; text-align:center; border-top:3px solid {accent};
+         box-shadow:0 0 20px rgba(59,130,246,0.07); box-sizing:border-box;">
+      <div style="font-size:1.8rem; font-weight:700; color:#F1F5F9; line-height:1;">{value}</div>
+      <div style="font-size:0.78rem; color:#475569; margin-top:6px; text-transform:uppercase;
            letter-spacing:0.5px;">{label}</div>
       {sub_html}
     </div>"""
@@ -87,23 +92,24 @@ def _metric_display(value, label, sub=None, color="#1E3A5F"):
 class ClinicalMetricsPage:
     @staticmethod
     def render():
-        # ── Header ────────────────────────────────────────────────────
+        # ── Page header ───────────────────────────────────────────────────────
         st.markdown("""
-        <div style="background:linear-gradient(90deg,#1B5E20 0%,#2E7D32 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
-             box-sizing:border-box;width:100%;">
-          <div style="font-size:1.7rem;font-weight:700;">🏥 Clinical Metrics</div>
-          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
-            What matters at the bedside — beyond AUROC and accuracy
+        <div style="margin-bottom:28px; padding-bottom:16px; border-bottom:1px solid #1E2A45;">
+          <div style="display:inline-block; background:rgba(16,185,129,0.10); color:#34D399;
+               padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700;
+               letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">CLINICAL</div>
+          <div style="font-size:1.6rem; font-weight:700; color:#F1F5F9; letter-spacing:-0.3px;">
+            🏥 Clinical Metrics
           </div>
-          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
+          <div style="font-size:0.88rem; color:#64748B; margin-top:6px; max-width:640px;">
+            What matters at the bedside — beyond AUROC and accuracy.
             Standard ML metrics don't tell you if a model is safe to use in a hospital.
             These metrics translate model performance into clinical impact.
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Why standard ML metrics aren't enough ────────────────────
+        # ── Why standard ML metrics aren't enough ─────────────────────────────
         st.markdown("### Why AUROC alone isn't enough")
         st.markdown("""
         AUROC = 0.92 sounds good. But it doesn't answer the questions that matter to a clinician:
@@ -115,7 +121,7 @@ class ClinicalMetricsPage:
         The four clinical metrics below answer these questions directly.
         """)
 
-        # ── Metric explanations ───────────────────────────────────────
+        # ── Metric explanations ───────────────────────────────────────────────
         st.markdown("### What each metric measures")
 
         col1, col2 = st.columns(2)
@@ -130,7 +136,7 @@ class ClinicalMetricsPage:
                     "Setting specificity to 95% keeps false alarms low. Sensitivity at that point "
                     "tells you how many real sepsis cases you're still catching.",
                     "≥ 0.70 — catching 70%+ of sepsis at only 5% false-alarm rate",
-                    "#1565C0",
+                    "#3B82F6",
                 ),
                 unsafe_allow_html=True,
             )
@@ -143,7 +149,7 @@ class ClinicalMetricsPage:
                     "gets 40 false sepsis alerts per shift, staff start ignoring them — and miss "
                     "real ones. This metric tells you the operational burden of the model.",
                     "< 5 per day — fewer than 1 false alarm per 4-hour block",
-                    "#E65100",
+                    "#F59E0B",
                 ),
                 unsafe_allow_html=True,
             )
@@ -159,7 +165,7 @@ class ClinicalMetricsPage:
                     "90% of cases means alerting on every patient, the model is useless. This "
                     "metric shows the false-alarm cost of achieving high recall.",
                     "≥ 0.70 — 70%+ of healthy patients correctly cleared at 90% recall",
-                    "#1B5E20",
+                    "#10B981",
                 ),
                 unsafe_allow_html=True,
             )
@@ -172,12 +178,15 @@ class ClinicalMetricsPage:
                     "sepsis patient. NNAlert = 2 means every other alert is real. Lower is better. "
                     "It directly measures how much clinician time the model wastes.",
                     "< 5 — at most 5 investigations per confirmed sepsis case",
-                    "#6A1B9A",
+                    "#8B5CF6",
                 ),
                 unsafe_allow_html=True,
             )
 
-        st.markdown("---")
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
 
         if not _CLINICAL_AVAILABLE:
             st.error(
@@ -186,7 +195,7 @@ class ClinicalMetricsPage:
             )
             return
 
-        # ── Load all available eval files ─────────────────────────────
+        # ── Load all available eval files ─────────────────────────────────────
         available = {}   # display_name -> (data, color, calibrated_threshold)
         for fname, display_name, color, cal_threshold in KNOWN_EVAL_FILES:
             data = _load(str(ROOT / fname))
@@ -200,17 +209,17 @@ class ClinicalMetricsPage:
                     "--out_file eval_results_federated.json")
             return
 
-        # ── Summary table (all models, calibrated thresholds) ─────────
+        # ── Summary table (all models, calibrated thresholds) ─────────────────
         st.markdown("### Clinical metrics summary — all models")
         st.markdown(
-            '<span style="font-size:0.85rem;color:#64748B;">Computed at each model\'s '
+            '<span style="font-size:0.85rem; color:#64748B;">Computed at each model\'s '
             'calibrated threshold. Threshold-independent metrics (Sens@Spec, Spec@Sens) '
             'reflect the full ROC curve.</span>',
             unsafe_allow_html=True,
         )
 
         # Separate patient-level from windowed
-        patient_models = {k: v for k, v in available.items() if "windowed" not in k.lower()}
+        patient_models  = {k: v for k, v in available.items() if "windowed" not in k.lower()}
         windowed_models = {k: v for k, v in available.items() if "windowed" in k.lower()}
 
         def _build_summary_rows(models_dict):
@@ -254,8 +263,9 @@ class ClinicalMetricsPage:
 
         if windowed_models:
             st.markdown(
-                '<div style="background:#FFF8E1;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;'
-                'padding:10px 16px;color:#E65100;margin:12px 0;font-size:0.86rem;">'
+                '<div style="background:rgba(245,158,11,0.08); border-left:4px solid #F59E0B;'
+                'border-radius:0 8px 8px 0; padding:10px 16px; color:#FCD34D; '
+                'margin:12px 0; font-size:0.86rem;">'
                 '<b>Early Warning model below (different task)</b> — predicts sepsis onset in next 6h '
                 'from a 12h window. Not directly comparable to the patient-level models above.</div>',
                 unsafe_allow_html=True,
@@ -265,13 +275,16 @@ class ClinicalMetricsPage:
                 import pandas as pd
                 st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
 
-        st.markdown("---")
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
 
-        # ── Interactive threshold explorer ────────────────────────────
+        # ── Interactive threshold explorer ─────────────────────────────────────
         st.markdown("### Interactive threshold explorer")
         st.markdown(
-            '<div style="background:#E3F2FD;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;'
-            'padding:14px 18px;color:#0D47A1;margin-bottom:20px;">'
+            '<div style="background:rgba(59,130,246,0.08); border-left:4px solid #3B82F6;'
+            'border-radius:0 8px 8px 0; padding:14px 18px; color:#93C5FD; margin-bottom:20px;">'
             '<b>About the threshold slider:</b> The model outputs a probability (0–1). '
             'Calling a patient "high risk" requires choosing a cutoff. A lower threshold catches '
             'more sepsis cases (higher recall) but triggers more false alarms. The slider lets you '
@@ -312,19 +325,19 @@ class ClinicalMetricsPage:
 
         c1.markdown(_metric_display(
             f"{sens95:.3f}", "Sensitivity @ 95% Spec",
-            "Catch rate at low false-alarm setting", "#1565C0",
+            "Catch rate at low false-alarm setting", "#3B82F6",
         ), unsafe_allow_html=True)
         c2.markdown(_metric_display(
             f"{spec90:.3f}", "Specificity @ 90% Sens",
-            "False-alarm rate at high-recall setting", "#1B5E20",
+            "False-alarm rate at high-recall setting", "#10B981",
         ), unsafe_allow_html=True)
         c3.markdown(_metric_display(
             f"{af:.2f}", "Alert Fatigue (FP/day)",
-            "False alerts per day operational burden", "#E65100",
+            "False alerts per day operational burden", "#F59E0B",
         ), unsafe_allow_html=True)
         c4.markdown(_metric_display(
             f"{nna:.1f}", "NNAlert",
-            "Investigations per confirmed case", "#6A1B9A",
+            "Investigations per confirmed case", "#8B5CF6",
         ), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)

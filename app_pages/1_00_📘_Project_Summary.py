@@ -2,44 +2,48 @@
 import streamlit as st
 
 
-# Inline-styled card helpers — these work regardless of Streamlit theme
-def _metric_card(value, label):
+# ── Dark-theme inline card helpers ────────────────────────────────────────────
+def _metric_card(value, label, accent="#3B82F6"):
     return f"""
-    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;
-         padding:20px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.07);">
-      <div style="font-size:2rem;font-weight:700;color:#1E3A5F;line-height:1;">{value}</div>
-      <div style="font-size:0.75rem;color:#64748B;margin-top:6px;text-transform:uppercase;
-           letter-spacing:0.6px;">{label}</div>
+    <div style="background:#141827; border:1px solid #1E2A45; border-top:3px solid {accent};
+         border-radius:12px; padding:22px 16px; text-align:center;
+         box-shadow:0 0 20px rgba(59,130,246,0.07); box-sizing:border-box;">
+      <div style="font-size:2rem; font-weight:700; color:#F1F5F9; line-height:1;">{value}</div>
+      <div style="font-size:0.72rem; color:#475569; margin-top:8px; text-transform:uppercase;
+           letter-spacing:0.8px;">{label}</div>
     </div>"""
 
 
-def _arch_card(title, subtitle, body):
+def _arch_card(title, subtitle, body, accent="#3B82F6", accent_light="#60A5FA"):
     return f"""
-    <div style="background:#F8FAFC;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;
-         padding:14px 18px;margin:10px 0;color:#1E293B;">
-      <div style="font-size:1rem;font-weight:700;color:#1E3A5F;margin-bottom:4px;">{title}</div>
-      <div style="font-size:0.82rem;color:#2563EB;margin-bottom:6px;">{subtitle}</div>
-      <div style="font-size:0.84rem;color:#475569;line-height:1.5;">{body}</div>
+    <div style="background:#141827; border:1px solid #1E2A45; border-left:4px solid {accent};
+         border-radius:0 10px 10px 0; padding:16px 18px; margin:10px 0;
+         box-sizing:border-box;">
+      <div style="font-size:1rem; font-weight:700; color:#F1F5F9; margin-bottom:4px;">{title}</div>
+      <div style="font-size:0.82rem; color:{accent_light}; margin-bottom:6px;">{subtitle}</div>
+      <div style="font-size:0.84rem; color:#94A3B8; line-height:1.6;">{body}</div>
     </div>"""
 
 
 def _step(num, title, desc):
     return f"""
-    <div style="display:flex;align-items:flex-start;margin:10px 0;">
-      <div style="background:#1E3A5F;color:white;border-radius:50%;width:28px;height:28px;
-           display:flex;align-items:center;justify-content:center;font-size:0.8rem;
-           font-weight:700;flex-shrink:0;margin-top:2px;">{num}</div>
+    <div style="display:flex; align-items:flex-start; margin:10px 0;">
+      <div style="background:rgba(59,130,246,0.15); color:#60A5FA; border:1px solid rgba(59,130,246,0.3);
+           border-radius:50%; width:28px; height:28px; display:flex; align-items:center;
+           justify-content:center; font-size:0.8rem; font-weight:700; flex-shrink:0;
+           margin-top:2px;">{num}</div>
       <div style="margin-left:12px;">
-        <div style="font-weight:600;color:#1E293B;">{title}</div>
-        <div style="font-size:0.83rem;color:#64748B;margin-top:2px;">{desc}</div>
+        <div style="font-weight:600; color:#F1F5F9;">{title}</div>
+        <div style="font-size:0.83rem; color:#64748B; margin-top:2px;">{desc}</div>
       </div>
     </div>"""
 
 
-def _callout(color_bg, color_border, color_text, text):
+def _callout_info(text):
     return f"""
-    <div style="background:{color_bg};border-left:4px solid {color_border};
-         border-radius:0 8px 8px 0;padding:12px 16px;color:{color_text};margin:10px 0;">
+    <div style="background:rgba(59,130,246,0.08); border-left:4px solid #3B82F6;
+         border-radius:0 8px 8px 0; padding:12px 16px; color:#93C5FD; margin:12px 0;
+         box-sizing:border-box;">
       {text}
     </div>"""
 
@@ -47,24 +51,23 @@ def _callout(color_bg, color_border, color_text, text):
 class ProjectSummaryPage:
     @staticmethod
     def render():
-        # ── Hero ──────────────────────────────────────────────────────────
+        # ── Page header ───────────────────────────────────────────────────────
         st.markdown("""
-        <div style="background:linear-gradient(90deg,#1E3A5F 0%,#2563EB 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
-             box-sizing:border-box;width:100%;">
-          <div style="font-size:1.7rem;font-weight:700;letter-spacing:-0.3px;">
+        <div style="margin-bottom:28px; padding-bottom:16px; border-bottom:1px solid #1E2A45;">
+          <div style="display:inline-block; background:rgba(59,130,246,0.12); color:#60A5FA;
+               padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700;
+               letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">OVERVIEW</div>
+          <div style="font-size:1.6rem; font-weight:700; color:#F1F5F9; letter-spacing:-0.3px;">
             👶 Neonatal Sepsis Detection
           </div>
-          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
-            Federated Learning pipeline — privacy-first early warning from 48-hour clinical time-series
-          </div>
-          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
+          <div style="font-size:0.88rem; color:#64748B; margin-top:6px; max-width:640px;">
+            Federated Learning pipeline — privacy-first early warning from 48-hour clinical time-series.
             Patient data never leaves the hospital. Only model weights are shared across sites.
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # ── What is this project? ─────────────────────────────────────────
+        # ── What is this project? ─────────────────────────────────────────────
         st.markdown("### What is this project?")
         st.markdown("""
         This system detects **neonatal sepsis** early — before it becomes life-threatening — using
@@ -76,18 +79,20 @@ class ProjectSummaryPage:
         The result is a stronger model than any single hospital could build alone.
         """)
 
-        # ── Stat cards ─────────────────────────────────────────────────────
+        # ── Stat cards ────────────────────────────────────────────────────────
         c1, c2, c3, c4 = st.columns(4)
-        for col, (val, label) in zip(
+        accents = ["#3B82F6", "#06B6D4", "#8B5CF6", "#10B981"]
+        for col, (val, label), accent in zip(
             [c1, c2, c3, c4],
             [("40,323", "Patient Files"), ("40", "Clinical Features"),
              ("48", "Timesteps / Window"), ("5", "FL Clients")],
+            accents,
         ):
-            col.markdown(_metric_card(val, label), unsafe_allow_html=True)
+            col.markdown(_metric_card(val, label, accent), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Architecture | Pipeline ────────────────────────────────────────
+        # ── Architecture | Pipeline ───────────────────────────────────────────
         left, right = st.columns(2)
 
         with left:
@@ -99,7 +104,8 @@ class ProjectSummaryPage:
                     "Transformer encoder with a CLS token that attends over all 48 timesteps "
                     "simultaneously. Sinusoidal positional embeddings encode ICU hour. Pad masking "
                     "ignores zero-padded missing hours. Good at capturing long-range correlations "
-                    "between vitals and lab values across an entire ICU stay."
+                    "between vitals and lab values across an entire ICU stay.",
+                    "#3B82F6", "#60A5FA",
                 ),
                 unsafe_allow_html=True,
             )
@@ -110,7 +116,8 @@ class ProjectSummaryPage:
                     "Gated Recurrent Unit with learned decay. In real ICUs, lab tests aren't drawn "
                     "every hour — values go missing for 4–12 hours. GRU-D models the <em>time since "
                     "last observation</em> per feature, gracefully handling sparse measurements by "
-                    "decaying toward the population mean when data is missing."
+                    "decaying toward the population mean when data is missing.",
+                    "#06B6D4", "#22D3EE",
                 ),
                 unsafe_allow_html=True,
             )
@@ -121,7 +128,8 @@ class ProjectSummaryPage:
                     "Final score = α·Transformer + (1-α)·GRU-D (α=0.5). Then Temperature Scaling "
                     "(LBFGS on validation set) adjusts the output so that <em>predicted probability "
                     "≈ true frequency</em> — a score of 0.8 should mean ~80% of patients at that "
-                    "score actually have sepsis."
+                    "score actually have sepsis.",
+                    "#8B5CF6", "#A78BFA",
                 ),
                 unsafe_allow_html=True,
             )
@@ -132,7 +140,8 @@ class ProjectSummaryPage:
                     "Server coordinates training rounds. Each client trains on local patients for "
                     "1 epoch, sends gradients to server. Server averages them (FedAvg) or applies "
                     "proximal regularisation (FedProx μ=0.01) to prevent client drift. FedBN keeps "
-                    "BatchNorm statistics local to each hospital's data distribution."
+                    "BatchNorm statistics local to each hospital's data distribution.",
+                    "#10B981", "#6EE7B7",
                 ),
                 unsafe_allow_html=True,
             )
@@ -170,9 +179,12 @@ class ProjectSummaryPage:
             for num, title, desc in steps:
                 st.markdown(_step(num, title, desc), unsafe_allow_html=True)
 
-        st.markdown("---")
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
 
-        # ── Dataset: what the data looks like ─────────────────────────────
+        # ── Dataset: what the data looks like ─────────────────────────────────
         st.markdown("### Dataset: What Each Patient File Contains")
         st.markdown("""
         Each patient is one `.psv` (pipe-separated) file with one row per ICU hour.
@@ -191,9 +203,10 @@ class ProjectSummaryPage:
             }
             for cat, feats in cats.items():
                 st.markdown(
-                    f'<div style="margin:6px 0;">'
-                    f'<span style="font-weight:600;color:#1E3A5F;">{cat}</span><br>'
-                    f'<span style="font-size:0.83rem;color:#475569;">{feats}</span></div>',
+                    f'<div style="background:#141827; border:1px solid #1E2A45; border-radius:8px;'
+                    f'padding:10px 14px; margin:6px 0;">'
+                    f'<span style="font-weight:600; color:#60A5FA; font-size:0.88rem;">{cat}</span><br>'
+                    f'<span style="font-size:0.83rem; color:#64748B;">{feats}</span></div>',
                     unsafe_allow_html=True,
                 )
 
@@ -208,44 +221,48 @@ class ProjectSummaryPage:
             ]
             for title, desc in challenges:
                 st.markdown(
-                    f'<div style="background:#F1F5F9;border-radius:6px;padding:8px 12px;margin:5px 0;">'
-                    f'<span style="font-weight:600;color:#1E3A5F;">{title}:</span> '
-                    f'<span style="font-size:0.84rem;color:#334155;">{desc}</span></div>',
+                    f'<div style="background:#141827; border:1px solid #1E2A45; border-radius:8px;'
+                    f'padding:10px 14px; margin:6px 0;">'
+                    f'<span style="font-weight:600; color:#F1F5F9; font-size:0.88rem;">{title}:</span> '
+                    f'<span style="font-size:0.84rem; color:#64748B;">{desc}</span></div>',
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("---")
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
 
-        # ── Key design decisions ───────────────────────────────────────────
+        # ── Key design decisions ───────────────────────────────────────────────
         st.markdown("### Key Design Decisions")
         d1, d2, d3 = st.columns(3)
         decisions = [
-            ("#E3F2FD", "#2196F3", "#0D47A1",
+            ("#3B82F6",
              "<b>Frozen test set</b>",
              "Split is created once and locked before any training begins. "
              "No hyperparameter or model selection decision ever sees test data."),
-            ("#E8F5E9", "#4CAF50", "#1B5E20",
+            ("#10B981",
              "<b>Patient-level split</b>",
              "Each patient is entirely in one split (never split across train/val/test). "
              "Prevents time-series leakage where early hours train and late hours evaluate."),
-            ("#FFF3E0", "#FF9800", "#E65100",
+            ("#F59E0B",
              "<b>FL test exclusion</b>",
              "Patients in the frozen test set are excluded from all FL client partitions. "
              "Federated clients only see train/val patients — zero leakage guaranteed."),
         ]
-        for col, (bg, border, text, title, body) in zip([d1, d2, d3], decisions):
+        for col, (accent, title, body) in zip([d1, d2, d3], decisions):
             col.markdown(
-                f'<div style="background:{bg};border-left:4px solid {border};'
-                f'border-radius:0 8px 8px 0;padding:14px 16px;color:{text};height:100%;">'
-                f'<div style="font-size:0.95rem;margin-bottom:6px;">{title}</div>'
-                f'<div style="font-size:0.83rem;font-weight:400;opacity:0.9;">{body}</div></div>',
+                f'<div style="background:#141827; border:1px solid #1E2A45; border-left:4px solid {accent};'
+                f'border-radius:0 10px 10px 0; padding:16px 18px; height:100%;'
+                f'box-sizing:border-box;">'
+                f'<div style="font-size:0.95rem; font-weight:700; color:#F1F5F9; margin-bottom:6px;">{title}</div>'
+                f'<div style="font-size:0.83rem; color:#64748B; line-height:1.6;">{body}</div></div>',
                 unsafe_allow_html=True,
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
-            _callout(
-                "#EFF6FF", "#2563EB", "#1E3A5F",
+            _callout_info(
                 "<b>Navigation guide:</b> Use <b>Predict</b> to run inference on a patient file. "
                 "Use <b>Model Metrics</b> to compare Federated vs Local AUROC/AUPRC. "
                 "Use <b>Clinical Metrics</b> to see bedside-relevant stats (sensitivity at specificity, "

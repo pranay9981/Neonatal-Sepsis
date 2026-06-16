@@ -41,189 +41,144 @@ st.markdown("""
   html, body, [class*="css"] {
     font-family: "Inter", "Segoe UI", sans-serif;
   }
+  /* ── Main background ─────────────────────────────────────────── */
+  .stApp {
+    background: #0F1117;
+  }
   /* ── Sidebar ──────────────────────────────────────────────────── */
   section[data-testid="stSidebar"] {
-    background: #1E3A5F;
-    color: #E8F0FE;
+    background: #0D1321 !important;
+    border-right: 1px solid #1E2A45;
   }
-  section[data-testid="stSidebar"] .stRadio label {
-    color: #C8D8F0 !important;
-    font-size: 0.95rem;
-    padding: 4px 0;
+  section[data-testid="stSidebar"] > div {
+    background: #0D1321 !important;
   }
-  section[data-testid="stSidebar"] .stRadio [aria-checked="true"] + div {
-    color: #FFFFFF !important;
-    font-weight: 600;
+  /* ── Sidebar nav inactive buttons ────────────────────────────── */
+  section[data-testid="stSidebar"] .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: #64748B !important;
+    text-align: left !important;
+    padding: 9px 14px !important;
+    font-size: 0.9rem !important;
+    font-weight: 400 !important;
+    width: 100% !important;
+    margin: 1px 0 !important;
+    transition: background 0.15s, color 0.15s !important;
   }
-  section[data-testid="stSidebar"] h1,
-  section[data-testid="stSidebar"] h2,
-  section[data-testid="stSidebar"] h3,
-  section[data-testid="stSidebar"] p,
-  section[data-testid="stSidebar"] span,
-  section[data-testid="stSidebar"] div {
-    color: #E8F0FE;
+  section[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(59,130,246,0.08) !important;
+    color: #94A3B8 !important;
+    border: none !important;
   }
-  /* ── Main area top bar ────────────────────────────────────────── */
-  .main-header {
-    background: linear-gradient(90deg, #1E3A5F 0%, #2563EB 100%);
-    color: white;
-    padding: 18px 28px 14px 28px;
-    border-radius: 10px;
-    margin-bottom: 24px;
+  section[data-testid="stSidebar"] .stButton > button:focus {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
-  .main-header h1 {
-    margin: 0;
-    font-size: 1.7rem;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-    color: white !important;
-  }
-  .main-header p {
-    margin: 4px 0 0 0;
-    font-size: 0.9rem;
-    opacity: 0.85;
-    color: #dde8ff !important;
-  }
-  /* ── Status badge ─────────────────────────────────────────────── */
-  .status-badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    margin: 2px 0;
-  }
-  .badge-ok   { background: #D4EDDA; color: #1E7E34; }
-  .badge-miss { background: #FDECEA; color: #C62828; }
-  /* ── Metric card ──────────────────────────────────────────────── */
-  .metric-card {
-    background: #F8FAFC;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    padding: 18px 20px;
-    text-align: center;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-  }
-  .metric-card .metric-value {
-    font-size: 1.9rem;
-    font-weight: 700;
-    color: #1E3A5F;
-    line-height: 1;
-  }
-  .metric-card .metric-label {
-    font-size: 0.78rem;
-    color: #64748B;
-    margin-top: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  /* ── Section card ─────────────────────────────────────────────── */
-  .section-card {
-    background: #F8FAFC !important;
-    border-left: 4px solid #2196F3;
-    border-radius: 0 8px 8px 0;
-    padding: 14px 18px;
-    margin: 10px 0;
-    color: #1E293B !important;
-  }
-  .section-card b, .section-card strong {
-    color: #1E3A5F !important;
-  }
-  /* ── Callout box ──────────────────────────────────────────────── */
-  .callout-success {
-    background: #E8F5E9 !important;
-    border-left: 4px solid #4CAF50;
-    border-radius: 0 8px 8px 0;
-    padding: 12px 16px;
-    color: #1B5E20 !important;
-    font-weight: 500;
-    margin: 12px 0;
-  }
-  .callout-info {
-    background: #E3F2FD !important;
-    border-left: 4px solid #2196F3;
-    border-radius: 0 8px 8px 0;
-    padding: 12px 16px;
-    color: #0D47A1 !important;
-    margin: 12px 0;
-  }
-  .callout-info b, .callout-info strong,
-  .callout-success b, .callout-success strong {
-    color: inherit !important;
-  }
-  /* ── Feature category chips ───────────────────────────────────── */
-  .chip {
-    display: inline-block;
-    background: #EFF6FF !important;
-    color: #1D4ED8 !important;
-    border-radius: 12px;
-    padding: 2px 10px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    margin: 2px;
-  }
-  /* ── Step number circles ──────────────────────────────────────── */
-  .step-num {
-    background: #1E3A5F !important;
-    color: white !important;
-  }
-  .step-desc {
-    color: #475569 !important;
-  }
-  /* hide default streamlit title padding */
+  /* ── Block container padding ──────────────────────────────────── */
   .block-container { padding-top: 1rem; }
+  /* ── Dataframe / table ────────────────────────────────────────── */
+  .stDataFrame { border: 1px solid #1E2A45 !important; }
+  /* ── Metric widget ────────────────────────────────────────────── */
+  [data-testid="stMetric"] {
+    background: #141827;
+    border: 1px solid #1E2A45;
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  [data-testid="stMetricLabel"] { color: #94A3B8 !important; }
+  [data-testid="stMetricValue"] { color: #F1F5F9 !important; }
+  /* ── Expander ─────────────────────────────────────────────────── */
+  details summary {
+    color: #94A3B8 !important;
+  }
+  /* ── Tabs ─────────────────────────────────────────────────────── */
+  .stTabs [data-baseweb="tab"] {
+    color: #64748B !important;
+  }
+  .stTabs [aria-selected="true"] {
+    color: #60A5FA !important;
+    border-bottom-color: #3B82F6 !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Session state init ─────────────────────────────────────────────────────────
+if "selected_page" not in st.session_state:
+    st.session_state.selected_page = PAGES[0][0]
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # Logo block
     st.markdown("""
-    <div style="text-align:center; padding: 10px 0 18px 0;">
-      <div style="font-size:2.2rem;">👶</div>
-      <div style="font-size:1rem; font-weight:700; color:#FFFFFF; letter-spacing:-0.2px;">
-        Neonatal Sepsis
-      </div>
-      <div style="font-size:0.75rem; color:#9DB8D9; margin-top:2px;">
-        FL Detection Dashboard
+    <div style="padding:12px 4px 20px 4px; border-bottom:1px solid #1E2A45; margin-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="background:rgba(59,130,246,0.15); border-radius:10px; padding:8px;
+             font-size:1.4rem; line-height:1;">👶</div>
+        <div>
+          <div style="font-size:0.95rem; font-weight:700; color:#F1F5F9;">Neonatal Sepsis</div>
+          <div style="font-size:0.72rem; color:#475569; margin-top:1px;">FL Detection · v2</div>
+        </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    choice = st.radio("Navigation", [p[0] for p in PAGES], label_visibility="collapsed")
-    st.markdown("---")
+    # Navigation
+    for label, fname, cls in PAGES:
+        is_active = st.session_state.selected_page == label
+        if is_active:
+            st.markdown(
+                f'<div style="background:rgba(59,130,246,0.13); border:1px solid rgba(59,130,246,0.25);'
+                f'border-radius:8px; padding:9px 14px; color:#60A5FA; font-size:0.9rem;'
+                f'font-weight:600; margin:1px 0; pointer-events:none; box-sizing:border-box;">'
+                f'{label}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            if st.button(label, key=f"nav_{label}", use_container_width=True):
+                st.session_state.selected_page = label
+                st.rerun()
 
     # Status section
-    model_ok     = MODEL_PATH.exists()
-    fed_ok       = EVAL_FED_PATH.exists()
-    loc_ok       = any(p.exists() for p in EVAL_LOC_PATHS)
-    windowed_ok  = EVAL_WINDOWED_PATH.exists()
+    model_ok    = MODEL_PATH.exists()
+    fed_ok      = EVAL_FED_PATH.exists()
+    loc_ok      = any(p.exists() for p in EVAL_LOC_PATHS)
+    windowed_ok = EVAL_WINDOWED_PATH.exists()
 
-    st.markdown("<div style='font-size:0.78rem; color:#9DB8D9; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:6px;'>SYSTEM STATUS</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #1E2A45;">
+      <div style="font-size:0.68rem; color:#475569; text-transform:uppercase;
+           letter-spacing:1px; margin-bottom:10px;">System Status</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    def _badge(label, ok):
-        bg    = "#D4EDDA" if ok else "#F8D7DA"
-        color = "#155724" if ok else "#721C24"
-        icon  = "&#10003;" if ok else "&#10007;"
+    def _status_dot(label, ok):
+        dot_color = "#10B981" if ok else "#EF4444"
         st.markdown(
-            f'<div style="display:inline-block;padding:4px 12px;border-radius:20px;'
-            f'background:{bg};color:{color};font-size:0.8rem;font-weight:600;'
-            f'margin:3px 0;width:100%;">{icon} {label}</div>',
+            f'<div style="display:flex; align-items:center; gap:8px; margin:6px 0;">'
+            f'<div style="width:7px; height:7px; border-radius:50%; background:{dot_color};'
+            f' flex-shrink:0; box-shadow:0 0 6px {dot_color};"></div>'
+            f'<span style="font-size:0.8rem; color:#64748B;">{label}</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-    _badge("Model checkpoint", model_ok)
-    _badge("Federated eval JSON", fed_ok)
-    _badge("Local eval JSON", loc_ok)
-    _badge("Windowed eval JSON", windowed_ok)
+    _status_dot("Model checkpoint", model_ok)
+    _status_dot("Federated eval JSON", fed_ok)
+    _status_dot("Local eval JSON", loc_ok)
+    _status_dot("Windowed eval JSON", windowed_ok)
 
     st.markdown(
-        '<div style="margin-top:20px;font-size:0.7rem;color:#6B8CAE;">'
+        '<div style="margin-top:16px; font-size:0.7rem; color:#334155;">'
         'v2 &middot; improvements/v2</div>',
         unsafe_allow_html=True,
     )
 
 # ── Resolve page ───────────────────────────────────────────────────────────────
+choice = st.session_state.selected_page
+
 selected_label, selected_file, selected_class = None, None, None
 for label, fname, cls in PAGES:
     if label == choice:

@@ -57,17 +57,21 @@ def _load_run(run_dir: Path) -> Optional[dict]:
 class TrainingRunsPage:
     @staticmethod
     def render():
+        # ── Page header ───────────────────────────────────────────────────────
         st.markdown("""
-        <div style="background:linear-gradient(90deg,#4A148C 0%,#7B1FA2 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
-             box-sizing:border-box;width:100%;">
-          <div style="font-size:1.7rem;font-weight:700;">&#128194; Training Run Browser</div>
-          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
-            Browse all local training runs &#8212; compare checkpoints, metrics, and learning curves
+        <div style="margin-bottom:28px; padding-bottom:16px; border-bottom:1px solid #1E2A45;">
+          <div style="display:inline-block; background:rgba(245,158,11,0.10); color:#FCD34D;
+               padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700;
+               letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">RUNS</div>
+          <div style="font-size:1.6rem; font-weight:700; color:#F1F5F9; letter-spacing:-0.3px;">
+            📂 Training Run Browser
           </div>
-          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
-            Runs are saved under <code>runs/</code> each time you call
-            <code>python src/train_local.py ...</code>
+          <div style="font-size:0.88rem; color:#64748B; margin-top:6px; max-width:640px;">
+            Browse all local training runs — compare checkpoints, metrics, and learning curves.
+            Runs are saved under <code style="background:#141827; border:1px solid #1E2A45;
+            border-radius:4px; padding:1px 6px; color:#60A5FA;">runs/</code> each time you call
+            <code style="background:#141827; border:1px solid #1E2A45;
+            border-radius:4px; padding:1px 6px; color:#60A5FA;">python src/train_local.py ...</code>
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -92,8 +96,12 @@ class TrainingRunsPage:
             st.warning("Found run directories but could not read any run_info.json files.")
             return
 
-        # ── Summary Table ────────────────────────────────────────────────────────
-        st.subheader(f"Found {len(runs)} training run(s)")
+        # ── Summary Table ─────────────────────────────────────────────────────
+        st.markdown(
+            f'<div style="font-size:1.05rem; font-weight:700; color:#F1F5F9; margin-bottom:16px;">'
+            f'Found {len(runs)} training run(s)</div>',
+            unsafe_allow_html=True,
+        )
         table_data = []
         for r in runs:
             table_data.append({
@@ -110,8 +118,11 @@ class TrainingRunsPage:
         df_table = pd.DataFrame(table_data)
         st.dataframe(df_table, use_container_width=True)
 
-        # ── Run Selector ─────────────────────────────────────────────────────────
-        st.markdown("---")
+        # ── Run Selector ──────────────────────────────────────────────────────
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
         run_names = [r["name"] for r in runs]
         selected_name = st.selectbox("Select a run to inspect:", run_names)
         selected = next((r for r in runs if r["name"] == selected_name), None)
@@ -121,7 +132,10 @@ class TrainingRunsPage:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Run Info**")
+            st.markdown(
+                '<div style="font-size:0.88rem; font-weight:600; color:#94A3B8; margin-bottom:8px;">Run Info</div>',
+                unsafe_allow_html=True,
+            )
             st.json({
                 "model": selected["model"],
                 "epochs_planned": selected["epochs_planned"],
@@ -131,39 +145,76 @@ class TrainingRunsPage:
                 "timestamp_utc": selected["timestamp"],
             })
         with col2:
-            st.markdown("**Best Metrics**")
+            st.markdown(
+                '<div style="font-size:0.88rem; font-weight:600; color:#94A3B8; margin-bottom:8px;">Best Metrics</div>',
+                unsafe_allow_html=True,
+            )
             c1, c2 = st.columns(2)
             c1.metric("Best AUROC", f"{selected['best_auc']:.4f}" if selected["best_auc"] else "N/A")
             c2.metric("Best AUPRC", f"{selected['best_ap']:.4f}" if selected["best_ap"] else "N/A")
 
             if selected["best_ckpt"]:
-                st.success("Checkpoint available")
+                st.markdown(
+                    '<div style="background:rgba(16,185,129,0.08); border-left:4px solid #10B981;'
+                    'border-radius:0 8px 8px 0; padding:10px 14px; color:#6EE7B7; '
+                    'font-size:0.85rem; margin-top:8px;">Checkpoint available</div>',
+                    unsafe_allow_html=True,
+                )
                 st.code(selected["best_ckpt"], language="text")
                 st.caption("Set `SEPSIS_MODEL_PATH` to this path to load it in the Predict page.")
             else:
-                st.error("No best checkpoint found.")
+                st.markdown(
+                    '<div style="background:rgba(239,68,68,0.08); border-left:4px solid #EF4444;'
+                    'border-radius:0 8px 8px 0; padding:10px 14px; color:#FCA5A5; '
+                    'font-size:0.85rem; margin-top:8px;">No best checkpoint found.</div>',
+                    unsafe_allow_html=True,
+                )
 
-        # ── Training Curve ───────────────────────────────────────────────────────
+        # ── Training Curve ────────────────────────────────────────────────────
         mdf = selected.get("metrics_df")
         if mdf is not None and not mdf.empty:
-            st.markdown("### Training Curve")
+            st.markdown(
+                '<div style="font-size:1.1rem; font-weight:700; color:#F1F5F9; margin:24px 0 12px 0;">'
+                'Training Curve</div>',
+                unsafe_allow_html=True,
+            )
             fig = go.Figure()
             if "train_loss" in mdf.columns:
-                fig.add_trace(go.Scatter(x=mdf["epoch"], y=mdf["train_loss"], name="Train Loss",
-                                         line=dict(color="#FF6F61"), yaxis="y2"))
+                fig.add_trace(go.Scatter(
+                    x=mdf["epoch"], y=mdf["train_loss"], name="Train Loss",
+                    line=dict(color="#EF4444"), yaxis="y2",
+                ))
             if "val_auc" in mdf.columns:
-                fig.add_trace(go.Scatter(x=mdf["epoch"], y=mdf["val_auc"], name="Val AUROC",
-                                          line=dict(color="#0052CC")))
+                fig.add_trace(go.Scatter(
+                    x=mdf["epoch"], y=mdf["val_auc"], name="Val AUROC",
+                    line=dict(color="#3B82F6"),
+                ))
             if "val_ap" in mdf.columns:
-                fig.add_trace(go.Scatter(x=mdf["epoch"], y=mdf["val_ap"], name="Val AUPRC",
-                                          line=dict(color="#2CA02C", dash="dash")))
+                fig.add_trace(go.Scatter(
+                    x=mdf["epoch"], y=mdf["val_ap"], name="Val AUPRC",
+                    line=dict(color="#10B981", dash="dash"),
+                ))
             fig.update_layout(
                 xaxis_title="Epoch",
-                yaxis=dict(title="Metric (AUROC / AUPRC)", range=[0, 1.05]),
-                yaxis2=dict(title="Train Loss", overlaying="y", side="right", showgrid=False),
+                yaxis=dict(
+                    title="Metric (AUROC / AUPRC)", range=[0, 1.05],
+                    gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45",
+                ),
+                yaxis2=dict(
+                    title="Train Loss", overlaying="y", side="right", showgrid=False,
+                    tickfont=dict(color="#64748B"), linecolor="#1E2A45",
+                ),
+                xaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45"),
                 height=400,
-                legend=dict(x=0.01, y=0.99),
+                legend=dict(
+                    x=0.01, y=0.99,
+                    bgcolor="rgba(20,24,39,0.9)", bordercolor="#1E2A45", borderwidth=1,
+                    font=dict(color="#94A3B8"),
+                ),
                 margin=dict(t=20, b=40),
+                font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#141827",
             )
             st.plotly_chart(fig, width='stretch')
 

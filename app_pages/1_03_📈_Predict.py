@@ -243,17 +243,27 @@ def compute_feature_importance(model, tensor: torch.Tensor, scaler=None) -> Opti
 
 
 def plot_prediction_histogram(probs_neg, probs_pos, score):
+    plt.rcParams.update({
+        'figure.facecolor': '#141827',
+        'axes.facecolor': '#0F1117',
+        'axes.edgecolor': '#1E2A45',
+        'axes.labelcolor': '#94A3B8',
+        'text.color': '#94A3B8',
+        'xtick.color': '#64748B',
+        'ytick.color': '#64748B',
+        'grid.color': '#1E2A45',
+    })
     fig, ax = plt.subplots(figsize=(10, 4))
     if len(probs_neg) > 0:
-        ax.hist(probs_neg, bins=50, alpha=0.7, color="#2196F3", label="No Sepsis (test set)", density=True)
+        ax.hist(probs_neg, bins=50, alpha=0.7, color="#3B82F6", label="No Sepsis (test set)", density=True)
     if len(probs_pos) > 0:
-        ax.hist(probs_pos, bins=50, alpha=0.7, color="#F44336", label="Sepsis (test set)", density=True)
-    ax.axvline(score, color="#FF6F00", linestyle="--", lw=3, label=f"This patient ({score:.2f})")
-    ax.set_title("Where this patient sits in the test-set distribution", fontsize=13)
+        ax.hist(probs_pos, bins=50, alpha=0.7, color="#EF4444", label="Sepsis (test set)", density=True)
+    ax.axvline(score, color="#F59E0B", linestyle="--", lw=3, label=f"This patient ({score:.2f})")
+    ax.set_title("Where this patient sits in the test-set distribution", fontsize=13, color="#94A3B8")
     ax.set_xlabel("Predicted Sepsis Probability")
     ax.set_ylabel("Density")
-    ax.legend()
-    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(facecolor="#141827", edgecolor="#1E2A45", labelcolor="#94A3B8")
+    ax.grid(True, linestyle="--", alpha=0.3, color="#1E2A45")
     fig.tight_layout()
     return fig
 
@@ -270,21 +280,27 @@ def plot_threshold_sensitivity(y_true, y_prob, current_threshold):
         recs.append(recall_score(y_true_arr, y_pred, zero_division=0))
         f1s.append(f1_score(y_true_arr, y_pred, zero_division=0))
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=thresholds, y=precs, name="Precision", line=dict(color="#1E3A5F", width=2)))
-    fig.add_trace(go.Scatter(x=thresholds, y=recs,  name="Recall",    line=dict(color="#F44336", width=2)))
-    fig.add_trace(go.Scatter(x=thresholds, y=f1s,   name="F1-Score",  line=dict(color="#2E7D32", width=2, dash="dash")))
-    fig.add_vline(x=current_threshold, line_color="#FF6F00", line_dash="dot",
+    fig.add_trace(go.Scatter(x=thresholds, y=precs, name="Precision", line=dict(color="#3B82F6", width=2)))
+    fig.add_trace(go.Scatter(x=thresholds, y=recs,  name="Recall",    line=dict(color="#EF4444", width=2)))
+    fig.add_trace(go.Scatter(x=thresholds, y=f1s,   name="F1-Score",  line=dict(color="#10B981", width=2, dash="dash")))
+    fig.add_vline(x=current_threshold, line_color="#F59E0B", line_dash="dot",
                   annotation_text=f"Current threshold = {current_threshold:.2f}",
-                  annotation_position="top right")
+                  annotation_position="top right",
+                  annotation_font_color="#F59E0B")
     fig.update_layout(
-        title="Precision / Recall / F1 across all thresholds",
+        title=dict(text="Precision / Recall / F1 across all thresholds", font=dict(color="#94A3B8")),
         xaxis_title="Decision Threshold",
         yaxis_title="Score",
-        yaxis=dict(range=[0, 1.05]),
+        yaxis=dict(range=[0, 1.05], gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45"),
+        xaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45"),
         height=360,
         margin=dict(t=50, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        font=dict(family="Inter, Segoe UI, sans-serif"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    bgcolor="rgba(20,24,39,0.9)", bordercolor="#1E2A45", borderwidth=1,
+                    font=dict(color="#94A3B8")),
+        font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#141827",
     )
     return fig
 
@@ -325,41 +341,50 @@ def template_csv_random():
 class PredictPage:
     @staticmethod
     def render():
-        # ── Header ────────────────────────────────────────────────────────
+        # ── Page header ───────────────────────────────────────────────────────
         st.markdown("""
-        <div style="background:linear-gradient(90deg,#1E3A5F 0%,#2563EB 100%);
-             color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
-             box-sizing:border-box;width:100%;">
-          <div style="font-size:1.7rem;font-weight:700;">&#128202; Live Patient Prediction</div>
-          <div style="font-size:0.92rem;opacity:0.85;margin-top:4px;">
-            Provide 40 clinical features across up to 48 ICU hours &#8594; get a sepsis probability score
+        <div style="margin-bottom:28px; padding-bottom:16px; border-bottom:1px solid #1E2A45;">
+          <div style="display:inline-block; background:rgba(6,182,212,0.12); color:#22D3EE;
+               padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700;
+               letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">INFERENCE</div>
+          <div style="font-size:1.6rem; font-weight:700; color:#F1F5F9; letter-spacing:-0.3px;">
+            📈 Live Patient Prediction
           </div>
-          <div style="font-size:0.82rem;opacity:0.7;margin-top:8px;">
-            The model looks at trends over time, not just the most recent values.
-            More hours of data = better accuracy.
+          <div style="font-size:0.88rem; color:#64748B; margin-top:6px; max-width:640px;">
+            Provide 40 clinical features across up to 48 ICU hours → get a sepsis probability score.
+            The model looks at trends over time — more hours of data means better accuracy.
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Model status ───────────────────────────────────────────────────
+        # ── Model status ───────────────────────────────────────────────────────
         model, model_err = load_model(str(MODEL_PATH))
         eval_data = load_eval_data(str(EVAL_FEDERATED_JSON))
         scaler    = load_scaler(str(SCALER_PATH))
 
         stat_col1, stat_col2, stat_col3 = st.columns(3)
-        _stat = lambda ok, yes, no: (
-            f'<div style="background:{"#E8F5E9" if ok else "#FDECEA"};border-radius:8px;'
-            f'padding:10px 14px;color:{"#1B5E20" if ok else "#B71C1C"};font-size:0.85rem;font-weight:600;">'
-            f'{"&#10003;" if ok else "&#10007;"} {yes if ok else no}</div>'
-        )
-        stat_col1.markdown(_stat(model is not None,    "Model loaded",           f"Model missing — {model_err}"), unsafe_allow_html=True)
-        stat_col2.markdown(_stat(scaler is not None,   "Scaler loaded",          "Scaler not found — predictions may be less accurate"), unsafe_allow_html=True)
-        stat_col3.markdown(_stat(eval_data is not None,"Eval data loaded",       "No eval data — some analysis tabs will be empty"), unsafe_allow_html=True)
+
+        def _stat_card(col, ok, yes_label, no_label):
+            bg     = "rgba(16,185,129,0.10)" if ok else "rgba(239,68,68,0.10)"
+            border = "#10B981" if ok else "#EF4444"
+            color  = "#6EE7B7" if ok else "#FCA5A5"
+            icon   = "&#10003;" if ok else "&#10007;"
+            text   = yes_label if ok else no_label
+            col.markdown(
+                f'<div style="background:{bg}; border:1px solid {border}; border-radius:8px;'
+                f'padding:10px 14px; color:{color}; font-size:0.85rem; font-weight:600;">'
+                f'{icon} {text}</div>',
+                unsafe_allow_html=True,
+            )
+
+        _stat_card(stat_col1, model is not None, "Model loaded", f"Model missing — {model_err}")
+        _stat_card(stat_col2, scaler is not None, "Scaler loaded", "Scaler not found — predictions may be less accurate")
+        _stat_card(stat_col3, eval_data is not None, "Eval data loaded", "No eval data — some analysis tabs will be empty")
 
         if model is None:
             st.markdown("""
-            <div style="background:#FFF3E0;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;
-                 padding:14px 18px;color:#E65100;margin-top:12px;">
+            <div style="background:rgba(245,158,11,0.08); border-left:4px solid #F59E0B;
+                 border-radius:0 8px 8px 0; padding:14px 18px; color:#FCD34D; margin-top:12px;">
             <b>Model not available.</b> Train a model first, then run FL simulation:<br>
             <code>python src/train_local.py --index data/splits/train_index.pt --model transformer</code><br>
             <code>python scripts/run_fl_sim.py --client_indexes ...</code>
@@ -368,7 +393,7 @@ class PredictPage:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── How to use this page ───────────────────────────────────────────
+        # ── How to use this page ───────────────────────────────────────────────
         with st.expander("How to use this page — input format guide"):
             st.markdown(f"""
             This page accepts patient data in **four ways** (choose below):
@@ -398,8 +423,11 @@ class PredictPage:
             mime="text/csv",
         )
 
-        # ── Input mode ─────────────────────────────────────────────────────
-        st.markdown("---")
+        # ── Input mode ─────────────────────────────────────────────────────────
+        st.markdown(
+            '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown("### Step 1 — Provide patient data")
 
         mode = st.radio(
@@ -411,7 +439,7 @@ class PredictPage:
         if "df_input_temp" not in st.session_state:
             st.session_state.df_input_temp = None
 
-        # ── Upload CSV ──────────────────────────────────────────────────────
+        # ── Upload CSV ──────────────────────────────────────────────────────────
         if mode == "Upload CSV file":
             uploaded = st.file_uploader(
                 f"Upload patient CSV ({N_FEATURES} feature columns, one row per ICU hour)",
@@ -433,9 +461,12 @@ class PredictPage:
                 except Exception as e:
                     st.error(f"Failed to read CSV: {e}")
 
-        # ── Paste CSV ───────────────────────────────────────────────────────
+        # ── Paste CSV ───────────────────────────────────────────────────────────
         elif mode == "Paste CSV text":
-            st.markdown('<span style="font-size:0.85rem;color:#64748B;">One ICU hour per line, 40 comma-separated values per line</span>', unsafe_allow_html=True)
+            st.markdown(
+                '<span style="font-size:0.85rem; color:#64748B;">One ICU hour per line, 40 comma-separated values per line</span>',
+                unsafe_allow_html=True,
+            )
             text = st.text_area("Paste CSV text", height=180, placeholder="140,98.5,36.8,65,45,40,40,35,...")
             if st.button("Parse", type="primary"):
                 if not text.strip():
@@ -450,9 +481,12 @@ class PredictPage:
                         st.session_state.df_input_temp = df_parsed
                         st.success(f"Parsed: {df_parsed.shape[0]} rows")
 
-        # ── Single row ──────────────────────────────────────────────────────
+        # ── Single row ──────────────────────────────────────────────────────────
         elif mode == "Enter single row (40 values)":
-            st.markdown('<span style="font-size:0.85rem;color:#64748B;">Enter the most recent hour\'s measurements as 40 comma-separated numbers</span>', unsafe_allow_html=True)
+            st.markdown(
+                '<span style="font-size:0.85rem; color:#64748B;">Enter the most recent hour\'s measurements as 40 comma-separated numbers</span>',
+                unsafe_allow_html=True,
+            )
             single_text = st.text_area(f"40 comma-separated values", height=80,
                                        placeholder="140, 98.5, 36.8, 65, 45, 40, 40, 35, ...")
             tile_option = st.radio(
@@ -477,9 +511,12 @@ class PredictPage:
                     except Exception as e:
                         st.error(f"Parse error: {e}")
 
-        # ── Manual fill ─────────────────────────────────────────────────────
+        # ── Manual fill ─────────────────────────────────────────────────────────
         else:
-            st.markdown('<span style="font-size:0.85rem;color:#64748B;">Set each feature value below (pre-filled with typical neonatal ICU defaults)</span>', unsafe_allow_html=True)
+            st.markdown(
+                '<span style="font-size:0.85rem; color:#64748B;">Set each feature value below (pre-filled with typical neonatal ICU defaults)</span>',
+                unsafe_allow_html=True,
+            )
             cols = st.columns(4)
             manual_vals = {}
             per_col = int(np.ceil(len(FEATURE_NAMES) / 4))
@@ -506,9 +543,12 @@ class PredictPage:
                 st.session_state.df_input_temp = pd.DataFrame(arr, columns=FEATURE_NAMES)
                 st.success("Stored — scroll down to run prediction.")
 
-        # ── Preview + run ───────────────────────────────────────────────────
+        # ── Preview + run ───────────────────────────────────────────────────────
         if st.session_state.df_input_temp is not None:
-            st.markdown("---")
+            st.markdown(
+                '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+                unsafe_allow_html=True,
+            )
             st.markdown("### Step 2 — Review and run")
 
             df_preview = st.session_state.df_input_temp.copy()
@@ -548,74 +588,90 @@ class PredictPage:
                     st.error(f"Prediction error: {err}")
                     return
 
-                # ── Result banner ───────────────────────────────────────────
-                st.markdown("---")
+                # ── Result banner ─────────────────────────────────────────────
+                st.markdown(
+                    '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+                    unsafe_allow_html=True,
+                )
                 st.markdown("### Result")
 
                 risk_pct = prob * 100
                 if prob > threshold:
-                    banner_bg, banner_border, banner_color = "#FDECEA", "#F44336", "#B71C1C"
-                    risk_label = "HIGH RISK"
-                    risk_icon  = "&#9888;"
+                    banner_bg     = "rgba(239,68,68,0.10)"
+                    banner_border = "#EF4444"
+                    banner_color  = "#FCA5A5"
+                    risk_label    = "HIGH RISK"
+                    risk_icon     = "&#9888;"
                     advice = (
                         "Immediate clinical evaluation recommended. "
                         "Consider blood cultures, CBC, CRP/PCT, and early antibiotic coverage "
                         "per local protocol. Increase monitoring frequency."
                     )
                 elif prob > threshold * 0.6:
-                    banner_bg, banner_border, banner_color = "#FFF8E1", "#FF9800", "#E65100"
-                    risk_label = "MODERATE RISK"
-                    risk_icon  = "&#8505;"
+                    banner_bg     = "rgba(245,158,11,0.10)"
+                    banner_border = "#F59E0B"
+                    banner_color  = "#FCD34D"
+                    risk_label    = "MODERATE RISK"
+                    risk_icon     = "&#8505;"
                     advice = (
                         "Elevated vigilance advised. "
                         "Consider repeat assessment in 2–4 hours. Low threshold for labs "
                         "or escalation if clinical picture deteriorates."
                     )
                 else:
-                    banner_bg, banner_border, banner_color = "#E8F5E9", "#4CAF50", "#1B5E20"
-                    risk_label = "LOW RISK"
-                    risk_icon  = "&#10003;"
+                    banner_bg     = "rgba(16,185,129,0.10)"
+                    banner_border = "#10B981"
+                    banner_color  = "#6EE7B7"
+                    risk_label    = "LOW RISK"
+                    risk_icon     = "&#10003;"
                     advice = "Continue standard monitoring. Re-assess if clinical condition changes."
 
                 st.markdown(
-                    f'<div style="background:{banner_bg};border-left:6px solid {banner_border};'
-                    f'border-radius:0 10px 10px 0;padding:16px 20px;margin:12px 0;">'
-                    f'<span style="font-size:1.3rem;font-weight:700;color:{banner_color};">'
+                    f'<div style="background:{banner_bg}; border-left:6px solid {banner_border};'
+                    f'border-radius:0 10px 10px 0; padding:16px 20px; margin:12px 0;">'
+                    f'<span style="font-size:1.3rem; font-weight:700; color:{banner_color};">'
                     f'{risk_icon} {risk_label} — {risk_pct:.1f}%</span><br>'
-                    f'<span style="font-size:0.9rem;color:{banner_color};opacity:0.9;margin-top:4px;display:block;">'
-                    f'{advice}</span></div>',
+                    f'<span style="font-size:0.9rem; color:{banner_color}; opacity:0.9; '
+                    f'margin-top:4px; display:block;">{advice}</span></div>',
                     unsafe_allow_html=True,
                 )
 
-                # ── Gauge + score breakdown ─────────────────────────────────
+                # ── Gauge + score breakdown ───────────────────────────────────
                 col_gauge, col_info = st.columns([1, 1])
                 with col_gauge:
                     fig_gauge = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=risk_pct,
-                        number={"suffix": "%", "font": {"size": 32, "color": "#1E3A5F"}},
+                        number={"suffix": "%", "font": {"size": 32, "color": "#F1F5F9"}},
                         title={"text": "Sepsis Risk Score", "font": {"size": 16, "color": "#64748B"}},
                         gauge={
-                            "axis": {"range": [0, 100], "tickfont": {"size": 11}},
+                            "axis": {"range": [0, 100], "tickfont": {"size": 11, "color": "#64748B"},
+                                     "tickcolor": "#1E2A45"},
                             "bar":  {"color": banner_border, "thickness": 0.25},
+                            "bgcolor": "#141827",
+                            "bordercolor": "#1E2A45",
                             "steps": [
-                                {"range": [0,  30], "color": "#E8F5E9"},
-                                {"range": [30, 60], "color": "#FFF8E1"},
-                                {"range": [60, 100], "color": "#FDECEA"},
+                                {"range": [0,  30], "color": "rgba(16,185,129,0.15)"},
+                                {"range": [30, 60], "color": "rgba(245,158,11,0.15)"},
+                                {"range": [60, 100], "color": "rgba(239,68,68,0.15)"},
                             ],
                             "threshold": {
-                                "line": {"color": "#1E3A5F", "width": 3},
+                                "line": {"color": "#60A5FA", "width": 3},
                                 "value": threshold * 100,
                             },
                         },
                     ))
-                    fig_gauge.update_layout(height=280, margin=dict(t=40, b=10, l=20, r=20))
+                    fig_gauge.update_layout(
+                        height=280, margin=dict(t=40, b=10, l=20, r=20),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
+                    )
                     st.plotly_chart(fig_gauge, width='stretch')
 
                 with col_info:
                     st.markdown(
-                        '<div style="font-size:0.8rem;font-weight:600;color:#64748B;'
-                        'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">'
+                        '<div style="font-size:0.8rem; font-weight:600; color:#475569;'
+                        'text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">'
                         'Score breakdown</div>',
                         unsafe_allow_html=True,
                     )
@@ -626,17 +682,20 @@ class PredictPage:
                         ("Decision",         risk_label),
                     ]:
                         st.markdown(
-                            f'<div style="background:#F8FAFC;border:1px solid #E2E8F0;'
-                            f'border-radius:6px;padding:8px 12px;margin:4px 0;'
-                            f'display:flex;justify-content:space-between;">'
-                            f'<span style="color:#64748B;font-size:0.85rem;">{label}</span>'
-                            f'<span style="font-weight:600;color:#1E3A5F;font-size:0.85rem;">{val}</span>'
+                            f'<div style="background:#141827; border:1px solid #1E2A45;'
+                            f'border-radius:6px; padding:8px 12px; margin:4px 0;'
+                            f'display:flex; justify-content:space-between;">'
+                            f'<span style="color:#64748B; font-size:0.85rem;">{label}</span>'
+                            f'<span style="font-weight:600; color:#F1F5F9; font-size:0.85rem;">{val}</span>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
 
-                # ── Analysis tabs ───────────────────────────────────────────
-                st.markdown("---")
+                # ── Analysis tabs ─────────────────────────────────────────────
+                st.markdown(
+                    '<div style="border-top:1px solid #1E2A45; margin:24px 0;"></div>',
+                    unsafe_allow_html=True,
+                )
                 tab1, tab2, tab3 = st.tabs([
                     "Distribution comparison",
                     "Feature importance",
@@ -646,8 +705,8 @@ class PredictPage:
                 with tab1:
                     st.markdown("**How this patient compares to the test set**")
                     st.markdown(
-                        '<span style="font-size:0.85rem;color:#64748B;">Blue = no-sepsis patients, '
-                        'Red = sepsis patients, Orange line = this patient\'s score</span>',
+                        '<span style="font-size:0.85rem; color:#64748B;">Blue = no-sepsis patients, '
+                        'Red = sepsis patients, Amber line = this patient\'s score</span>',
                         unsafe_allow_html=True,
                     )
                     if eval_data:
@@ -662,7 +721,7 @@ class PredictPage:
                 with tab2:
                     st.markdown("**Which features most influenced this prediction**")
                     st.markdown(
-                        '<span style="font-size:0.85rem;color:#64748B;">Computed via gradient saliency '
+                        '<span style="font-size:0.85rem; color:#64748B;">Computed via gradient saliency '
                         '(|d_output/d_input| averaged over timesteps). Higher = more influence.</span>',
                         unsafe_allow_html=True,
                     )
@@ -677,14 +736,21 @@ class PredictPage:
                             x=top_vals[::-1], y=top_names[::-1],
                             orientation="h",
                             marker_color=[
-                                f"rgba(30,58,95,{0.4 + 0.6 * v})" for v in top_vals[::-1]
+                                f"rgba(59,130,246,{0.4 + 0.6 * v})" for v in top_vals[::-1]
                             ],
                         ))
                         fig_imp.update_layout(
-                            title=f"Top {top_n} most influential features",
+                            title=dict(text=f"Top {top_n} most influential features",
+                                       font=dict(color="#94A3B8")),
                             xaxis_title="Normalised importance",
                             height=420, margin=dict(l=20, r=20, t=50, b=40),
-                            font=dict(family="Inter, Segoe UI, sans-serif"),
+                            font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="#141827",
+                            xaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"),
+                                       linecolor="#1E2A45"),
+                            yaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"),
+                                       linecolor="#1E2A45"),
                         )
                         st.plotly_chart(fig_imp, width='stretch')
                     else:
@@ -693,7 +759,7 @@ class PredictPage:
                 with tab3:
                     st.markdown("**How precision and recall change across thresholds**")
                     st.markdown(
-                        '<span style="font-size:0.85rem;color:#64748B;">Based on the frozen test set. '
+                        '<span style="font-size:0.85rem; color:#64748B;">Based on the frozen test set. '
                         'Use this to choose a threshold that balances catching sepsis vs false alarms.</span>',
                         unsafe_allow_html=True,
                     )
