@@ -755,3 +755,13 @@ model_comparison_plot.png
 | Non-IID AUROC is ~0.09 lower than IID | Expected — skewed client distributions cause gradient divergence. Try more rounds or stronger FedProx `--mu`. |
 | Docker build context is large (several GB) | Ensure `.dockerignore` is present in the project root — it excludes `data/`, `runs/`, `.venv/` etc. |
 | `docker run` — permission denied on uvicorn | Packages must be installed into the non-root user's home. Rebuild after pulling the latest Dockerfile. |
+
+---
+
+## Further Reading
+
+| Document | What it covers |
+|---|---|
+| [MODEL_CARD.md](./MODEL_CARD.md) | Full model card — architecture, training details, 8-model leaderboard, known limitations |
+| [CLINICAL_VALIDATION.md](./CLINICAL_VALIDATION.md) | Clinical operating points for all models — sensitivity, specificity, PPV, NNAlert, failure modes, prospective validation checklist |
+| [DATA_GOVERNANCE.md](./DATA_GOVERNANCE.md) | Data flow diagram, git commit policy, API PHI audit, HIPAA applicability, FL privacy notes |

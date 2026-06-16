@@ -8,6 +8,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.9%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Flower](https://img.shields.io/badge/Flower-1.23.0-00A9A5?style=flat-square)](https://flower.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.95%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![CI](https://github.com/pranay9981/Neonatal-Sepsis/actions/workflows/ci.yml/badge.svg?branch=improvements%2Fv2)](https://github.com/pranay9981/Neonatal-Sepsis/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/Tests-75%20passing-2ea44f?style=flat-square)](./tests/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](./LICENSE)
 
@@ -15,7 +16,7 @@ A research system for early detection of sepsis in ICU patients using clinical t
 Combines a **Transformer** and **GRU-D** ensemble with **Federated Learning** — enabling multi-hospital
 training without sharing patient data.
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Dashboard](#-dashboard) · [API](#-api-server) · [Model Card](./MODEL_CARD.md)
+[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Dashboard](#-dashboard) · [API](#-api-server) · [Model Card](./MODEL_CARD.md) · [Clinical Validation](./CLINICAL_VALIDATION.md) · [Data Governance](./DATA_GOVERNANCE.md)
 
 </div>
 
@@ -645,6 +646,8 @@ python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 **75 tests** covering preprocessing, dataset loading, model forward passes, training loop, FL client/server, evaluation metrics, split correctness, and windowed dataset creation.
+
+GitHub Actions runs the full suite on every push and PR to `improvements/v2` (Python 3.11, CPU-only torch). See `.github/workflows/ci.yml`.
 
 ---
 
