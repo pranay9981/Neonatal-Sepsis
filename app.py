@@ -16,6 +16,7 @@ PAGES_DIR = ROOT / "app_pages"
 MODEL_PATH = ROOT / "server_out" / "global_best.pt"
 EVAL_FED_PATH = ROOT / "eval_results_federated.json"
 EVAL_LOC_PATHS = [ROOT / "eval_results_grud.json", ROOT / "eval_results_transformer.json"]
+EVAL_WINDOWED_PATH = ROOT / "eval_results_windowed_grud.json"
 
 # Map: (label, filename, class_name)
 PAGES = [
@@ -193,9 +194,10 @@ with st.sidebar:
     st.markdown("---")
 
     # Status section
-    model_ok = MODEL_PATH.exists()
-    fed_ok   = EVAL_FED_PATH.exists()
-    loc_ok   = any(p.exists() for p in EVAL_LOC_PATHS)
+    model_ok     = MODEL_PATH.exists()
+    fed_ok       = EVAL_FED_PATH.exists()
+    loc_ok       = any(p.exists() for p in EVAL_LOC_PATHS)
+    windowed_ok  = EVAL_WINDOWED_PATH.exists()
 
     st.markdown("<div style='font-size:0.78rem; color:#9DB8D9; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:6px;'>SYSTEM STATUS</div>", unsafe_allow_html=True)
 
@@ -213,6 +215,7 @@ with st.sidebar:
     _badge("Model checkpoint", model_ok)
     _badge("Federated eval JSON", fed_ok)
     _badge("Local eval JSON", loc_ok)
+    _badge("Windowed eval JSON", windowed_ok)
 
     st.markdown(
         '<div style="margin-top:20px;font-size:0.7rem;color:#6B8CAE;">'
