@@ -346,8 +346,8 @@ def train(
     with open(metrics_csv, "w") as fh:
         fh.write("epoch,train_loss,val_auc,val_ap,lr\n")
 
-    best_auc = 0.0
-    best_ap = 0.0
+    best_auc = -1.0
+    best_ap = -1.0
     early_stop = EarlyStopping(patience=patience)
 
     # Track val predictions from the best-AUROC epoch for threshold calibration.
