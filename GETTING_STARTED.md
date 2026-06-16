@@ -416,7 +416,7 @@ python src/evaluate.py \
 
 Each output JSON contains: `auroc`, `auprc`, `precision`, `recall`, `f1`, `threshold`, `y_true`, `y_prob`, and 95% bootstrap CIs.
 
-Once the individual eval JSONs exist, the **Model Metrics** dashboard page auto-discovers them and displays interactive ROC/PRC curves for all four models side by side.
+Once the individual eval JSONs exist, the **Model Metrics** dashboard page auto-discovers them and displays interactive ROC/PRC curves for all models side by side.
 
 ---
 
@@ -506,15 +506,61 @@ Our best params (20 trials, 5 epochs): `lr=0.000233`, `batch_size=32`, `hidden_s
 
 ### Early-warning sliding-window dataset
 
-Creates one sample per ICU hour with a forward-looking label — "will sepsis onset within the next 6 hours?":
+Reframes the task prospectively: "given the last 12 ICU hours, will sepsis onset in the next 6 hours?" Each window is a 12h slice with a forward-looking label.
+
+**Step 1 — Training windows (train patients only — keeps test set clean):**
 
 ```bash
 python scripts/create_windowed_dataset.py \
-  --index data/processed/patients/index_with_labels.pt \
-  --out_dir data/processed/windowed \
-  --horizon 6 \
-  --stride 1
+  --index data/splits/train_index.pt \
+  --out_dir data/processed/windows \
+  --seq_len 12 \
+  --stride 6 \
+  --horizon 6
 ```
+
+> Use `--stride 6`. Stride=1 produces ~684k windows and causes ~1h/epoch due to disk I/O.
+
+**Step 2 — Test windows (test patients only — separate from training):**
+
+```bash
+python scripts/create_windowed_dataset.py \
+  --index data/splits/test_index.pt \
+  --out_dir data/processed/windows_test \
+  --seq_len 12 \
+  --stride 6 \
+  --horizon 6
+```
+
+**Step 3 — Train the windowed GRU-D:**
+
+```bash
+python src/train_local.py \
+  --index data/processed/windows/index_with_labels.pt \
+  --model grud \
+  --epochs 15 \
+  --batch_size 64 \
+  --hidden_size 128 \
+  --dropout 0.1 \
+  --patience 5 \
+  --use_focal \
+  --scaler_path data/processed/patients/scaler.json \
+  --run_name windowed_grud \
+  --use_mlflow \
+  --use_temperature_scaling
+```
+
+**Step 4 — Evaluate on the windowed test set:**
+
+```bash
+python src/evaluate.py \
+  --index data/processed/windows_test/index_with_labels.pt \
+  --ckpt runs/<your-windowed-run>/checkpoints/model_best.pt \
+  --model grud \
+  --out_file eval_results_windowed_grud.json
+```
+
+Our results: **AUROC 0.6002** on the windowed test set (0.5% positive rate — use `--use_focal` always). The dashboard shows this model under "GRU-D Windowed (Early Warning, 6h)" — separate from the patient-level leaderboard since it is a different task.
 
 ---
 
@@ -650,13 +696,17 @@ After a full pipeline run, you will have:
 ```
 data/
   processed/patients/       .pt tensors + scaler.json + index_with_labels.pt
+  processed/clients/        IID FL client partitions (client1/ … clientN/)
+  processed/clients_noniid/ Non-IID FL client partitions
+  processed/windows/        Windowed training set — train patients only (seq_len=12, stride=6)
+  processed/windows_test/   Windowed test set — test patients only
   splits/                   train_index.pt  val_index.pt  test_index.pt
-  processed/clients/        client1/ … clientN/ index.pt files
 
 runs/
   <timestamp>__<name>/
     checkpoints/model_best.pt
-    logs/
+    metrics.csv
+    threshold.json
 
 server_out/                 FedAvg IID results
   global_best.pt            best federated model (FedAvg, IID)
@@ -674,13 +724,14 @@ server_out_transformer/     Federated Transformer results
   global_best.pt            best federated Transformer model
   checkpoints_transformer/  per-round Transformer checkpoints
 
-eval_results_federated.json      FedAvg IID GRU-D test-set results  (AUROC 0.9238)
-eval_results_fedbn.json          FedBN IID GRU-D test-set results   (AUROC 0.9051)
-eval_results_noniid.json         FedAvg non-IID GRU-D results           (AUROC 0.8306)
-eval_results_transformer_fl.json Federated Transformer results          (AUROC 0.9018)
-eval_results_grud.json           GRU-D local test-set results           (AUROC 0.9189)
-eval_results_transformer.json    Transformer local test-set results      (AUROC 0.9092)
-eval_results_ensemble.json       Ensemble (Transformer+GRU-D)           (AUROC 0.9293)
+eval_results_federated.json      FedAvg IID GRU-D test-set results       (AUROC 0.9238)
+eval_results_fedbn.json          FedBN IID GRU-D test-set results        (AUROC 0.9051)
+eval_results_noniid.json         FedAvg non-IID GRU-D results            (AUROC 0.8306)
+eval_results_transformer_fl.json Federated Transformer results           (AUROC 0.9018)
+eval_results_grud.json           GRU-D local test-set results            (AUROC 0.9189)
+eval_results_transformer.json    Transformer local test-set results       (AUROC 0.9092)
+eval_results_ensemble.json       Ensemble (Transformer+GRU-D)            (AUROC 0.9293)
+eval_results_windowed_grud.json  GRU-D windowed early-warning results    (AUROC 0.6002)
 model_comparison_plot.png
 ```
 
