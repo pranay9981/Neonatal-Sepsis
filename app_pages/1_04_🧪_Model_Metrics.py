@@ -152,30 +152,33 @@ class MetricsPage:
             metrics_list.append(m)
         df_metrics = pd.DataFrame(metrics_list)
 
-        # ── Winner callout ─────────────────────────────────────────────────
-        fed_rows = df_metrics[df_metrics["Model"].str.lower().str.contains("fed")]
-        loc_rows = df_metrics[~df_metrics["Model"].str.lower().str.contains("fed")]
+        # ── Winner callout (patient-level models only, exclude windowed) ──
+        windowed_marker = "windowed"
+        pl_rows = df_metrics[~df_metrics["Model"].str.lower().str.contains(windowed_marker)]
+        fed_rows = pl_rows[pl_rows["Model"].str.lower().str.contains("fed")]
+        loc_rows = pl_rows[~pl_rows["Model"].str.lower().str.contains("fed")]
         if not fed_rows.empty and not loc_rows.empty:
-            fed_auroc = fed_rows["AUROC"].iloc[0]
+            best_fed_auroc = fed_rows["AUROC"].max()
+            best_fed_name  = fed_rows.loc[fed_rows["AUROC"].idxmax(), "Model"]
             best_loc_auroc = loc_rows["AUROC"].max()
-            best_loc_name = loc_rows.loc[loc_rows["AUROC"].idxmax(), "Model"]
-            if not (np.isnan(fed_auroc) or np.isnan(best_loc_auroc)):
-                diff = fed_auroc - best_loc_auroc
+            best_loc_name  = loc_rows.loc[loc_rows["AUROC"].idxmax(), "Model"]
+            if not (np.isnan(best_fed_auroc) or np.isnan(best_loc_auroc)):
+                diff = best_fed_auroc - best_loc_auroc
                 if diff > 0:
                     st.markdown(
                         f'<div style="background:#E8F5E9;border-left:4px solid #4CAF50;'
                         f'border-radius:0 8px 8px 0;padding:12px 18px;color:#1B5E20;">'
-                        f'<b>Federated model wins</b> by <b>+{diff:.3f} AUROC</b> '
-                        f'({fed_auroc:.3f} vs {best_loc_name}: {best_loc_auroc:.3f}) — federated collaboration '
-                        f'across sites generalises better than a single-site model.</div>',
+                        f'<b>Best federated model wins</b> by <b>+{diff:.3f} AUROC</b> '
+                        f'({best_fed_name}: {best_fed_auroc:.3f} vs {best_loc_name}: {best_loc_auroc:.3f}) — '
+                        f'federated collaboration generalises better than a single-site model.</div>',
                         unsafe_allow_html=True,
                     )
                 elif diff < 0:
                     st.markdown(
                         f'<div style="background:#FFF3E0;border-left:4px solid #FF9800;'
                         f'border-radius:0 8px 8px 0;padding:12px 18px;color:#E65100;">'
-                        f'{best_loc_name} leads by <b>{-diff:.3f} AUROC</b> at this point '
-                        f'({best_loc_auroc:.3f} vs federated: {fed_auroc:.3f}). '
+                        f'{best_loc_name} leads by <b>{-diff:.3f} AUROC</b> '
+                        f'({best_loc_auroc:.3f} vs best federated {best_fed_name}: {best_fed_auroc:.3f}). '
                         f'More FL rounds may close the gap.</div>',
                         unsafe_allow_html=True,
                     )
@@ -199,22 +202,31 @@ class MetricsPage:
                 | **Recall** | Of all true sepsis patients, what fraction were caught? | Minimising missed cases |
                 """)
 
-            # Summary table
+            # Summary table — split patient-level vs windowed
             st.markdown("#### Metrics at a glance")
             df_display = df_metrics.set_index("Model")[["AUROC","AUPRC","Accuracy","F1-Score","Precision","Recall"]]
-            st.dataframe(df_display.style.format("{:.3f}").background_gradient(
-                cmap="Blues", axis=0
-            ), use_container_width=True)
+            windowed_mask = df_display.index.str.lower().str.contains("windowed")
+            df_patient  = df_display[~windowed_mask]
+            df_windowed = df_display[windowed_mask]
+            if not df_patient.empty:
+                st.caption("Patient-level models (full ICU stay → sepsis risk)")
+                st.dataframe(df_patient.style.format("{:.3f}").background_gradient(
+                    cmap="Blues", axis=0
+                ), use_container_width=True)
+            if not df_windowed.empty:
+                st.caption("Early warning model (12h window → sepsis in next 6h) — different task, not directly comparable")
+                st.dataframe(df_windowed.style.format("{:.3f}"), use_container_width=True)
 
-            # Best metric callouts
-            st.markdown("#### Highlights")
+            # Best metric callouts (patient-level only)
+            st.markdown("#### Highlights (patient-level models)")
             h1, h2, h3 = st.columns(3)
-            best_auroc = df_display["AUROC"].idxmax()
-            best_f1    = df_display["F1-Score"].idxmax()
-            best_rec   = df_display["Recall"].idxmax()
-            h1.metric("Best AUROC",   f"{df_display['AUROC'].max():.3f}",   best_auroc)
-            h2.metric("Best F1",      f"{df_display['F1-Score'].max():.3f}", best_f1)
-            h3.metric("Best Recall",  f"{df_display['Recall'].max():.3f}",   best_rec)
+            _hl = df_patient if not df_patient.empty else df_display
+            best_auroc = _hl["AUROC"].idxmax()
+            best_f1    = _hl["F1-Score"].idxmax()
+            best_rec   = _hl["Recall"].idxmax()
+            h1.metric("Best AUROC",   f"{_hl['AUROC'].max():.3f}",   best_auroc)
+            h2.metric("Best F1",      f"{_hl['F1-Score'].max():.3f}", best_f1)
+            h3.metric("Best Recall",  f"{_hl['Recall'].max():.3f}",   best_rec)
 
             # Bar charts
             st.markdown("#### Side-by-side comparison")
@@ -381,20 +393,9 @@ class MetricsPage:
                 unsafe_allow_html=True,
             )
 
-            n_models = len(available)
-            fig, axes = plt.subplots(1, n_models, figsize=(7 * n_models, 6))
-            if n_models == 1:
-                axes = [axes]
-            for ax, (name, data) in zip(axes, available.items()):
-                color = model_colors.get(name, "#1E3A5F")
-                _confusion_ax(ax, data["y_true"], data["y_prob"],
-                              title=f"{name} Model", threshold=threshold, color=color)
-            plt.tight_layout()
-            st.pyplot(fig)
-
             st.markdown("""
             <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;
-                 padding:12px 18px;margin-top:12px;color:#334155;">
+                 padding:12px 18px;margin-bottom:12px;color:#334155;">
             <b>Reading the matrix:</b>
             <b>TN</b> = correctly cleared (no alert, right) &nbsp;|&nbsp;
             <b>FP</b> = false alarm (alert on healthy patient) &nbsp;|&nbsp;
@@ -402,6 +403,21 @@ class MetricsPage:
             <b>TP</b> = caught sepsis (the goal)
             </div>
             """, unsafe_allow_html=True)
+
+            # 2-column wrapping grid — one figure per model
+            model_items = list(available.items())
+            for row_start in range(0, len(model_items), 2):
+                pair = model_items[row_start: row_start + 2]
+                cols = st.columns(len(pair))
+                for col, (name, data) in zip(cols, pair):
+                    with col:
+                        fig, ax = plt.subplots(figsize=(5, 4))
+                        color = model_colors.get(name, "#1E3A5F")
+                        _confusion_ax(ax, data["y_true"], data["y_prob"],
+                                      title=name, threshold=threshold, color=color)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        plt.close(fig)
 
             def _summary(d):
                 return {k: v for k, v in d.items() if k not in ("y_true", "y_prob")}

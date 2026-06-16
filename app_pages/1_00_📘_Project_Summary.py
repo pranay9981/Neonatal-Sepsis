@@ -81,7 +81,7 @@ class ProjectSummaryPage:
         for col, (val, label) in zip(
             [c1, c2, c3, c4],
             [("40,323", "Patient Files"), ("40", "Clinical Features"),
-             ("48", "Timesteps / Window"), ("3", "FL Clients")],
+             ("48", "Timesteps / Window"), ("5", "FL Clients")],
         ):
             col.markdown(_metric_card(val, label), unsafe_allow_html=True)
 
@@ -153,13 +153,13 @@ class ProjectSummaryPage:
                  "(handles 7–9% sepsis rate), warmup+cosine LR schedule, gradient clipping, "
                  "and early stopping. Checkpoint saved to runs/."),
                 ("4", "Federated learning simulation",
-                 "Flower server coordinates N clients. Each client holds a private partition "
-                 "of train patients. Server aggregates updates for 20 rounds. Best global "
+                 "Flower server coordinates 5 clients. Each client holds a private partition "
+                 "of train patients. Server aggregates updates for 10 rounds. Best global "
                  "model saved to server_out/global_best.pt."),
                 ("5", "Evaluation on frozen test set",
                  "Loads the frozen test_index.pt (never seen during training). Computes "
                  "AUROC, AUPRC, F1, calibration error, and 95% bootstrap CIs. Outputs "
-                 "eval_results_federated.json and eval_results_local.json."),
+                 "eval_results_*.json per model."),
                 ("6", "Comparison plots",
                  "ROC and Precision-Recall curves with confidence bands for both models. "
                  "Visual confirmation that federated model generalises better."),

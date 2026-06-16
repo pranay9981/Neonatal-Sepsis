@@ -11,18 +11,42 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 try:
-    from config import EVAL_FEDERATED_JSON as _FED_PATH, EVAL_LOCAL_JSON as _LOC_PATH
-    EVAL_FEDERATED_JSON = Path(_FED_PATH)
-    EVAL_LOCAL_JSON = Path(_LOC_PATH)
-except Exception:
-    EVAL_FEDERATED_JSON = Path("eval_results_federated.json")
-    EVAL_LOCAL_JSON = Path("eval_results_local.json")
-
-try:
-    from clinical_metrics import compute_all
+    from clinical_metrics import (
+        sensitivity_at_specificity,
+        specificity_at_sensitivity,
+        alert_fatigue_rate,
+        nna_lert,
+        compute_all,
+    )
     _CLINICAL_AVAILABLE = True
 except Exception:
     _CLINICAL_AVAILABLE = False
+
+ROOT = Path(__file__).parent.parent
+
+# (filename, display_name, color, calibrated_threshold)
+KNOWN_EVAL_FILES = [
+    ("eval_results_federated.json",      "Federated GRU-D (FedAvg, IID)",      "#1E3A5F", 0.35),
+    ("eval_results_noniid.json",         "Federated GRU-D (FedAvg, non-IID)",  "#FF6F00", 0.35),
+    ("eval_results_fedbn.json",          "Federated GRU-D (FedBN)",            "#0277BD", 0.35),
+    ("eval_results_transformer_fl.json", "Federated Transformer (FedAvg)",     "#00695C", 0.35),
+    ("eval_results_grud.json",           "GRU-D (Local)",                      "#E53935", 0.3539),
+    ("eval_results_transformer.json",    "Transformer (Local)",                "#2E7D32", 0.3397),
+    ("eval_results_ensemble.json",       "Ensemble",                           "#6A1B9A", 0.35),
+    ("eval_results_windowed_grud.json",  "GRU-D Windowed (Early Warning, 6h)", "#795548", 0.2294),
+]
+
+
+@st.cache_data
+def _load(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 def _info_card(title, what_it_measures, why_it_matters, good_value, color="#1E3A5F"):
@@ -63,7 +87,7 @@ def _metric_display(value, label, sub=None, color="#1E3A5F"):
 class ClinicalMetricsPage:
     @staticmethod
     def render():
-        # ── Header ────────────────────────────────────────────────────────
+        # ── Header ────────────────────────────────────────────────────
         st.markdown("""
         <div style="background:linear-gradient(90deg,#1B5E20 0%,#2E7D32 100%);
              color:white;padding:20px 28px 16px 28px;border-radius:10px;margin-bottom:24px;
@@ -79,10 +103,10 @@ class ClinicalMetricsPage:
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Why standard ML metrics aren't enough ────────────────────────
+        # ── Why standard ML metrics aren't enough ────────────────────
         st.markdown("### Why AUROC alone isn't enough")
         st.markdown("""
-        AUROC = 0.85 sounds good. But it doesn't answer the questions that matter to a clinician:
+        AUROC = 0.92 sounds good. But it doesn't answer the questions that matter to a clinician:
 
         - **"If I use this model, how many real sepsis cases will I miss?"**
         - **"How many false alarms will it generate per shift?"**
@@ -91,7 +115,7 @@ class ClinicalMetricsPage:
         The four clinical metrics below answer these questions directly.
         """)
 
-        # ── Metric explanations ───────────────────────────────────────────
+        # ── Metric explanations ───────────────────────────────────────
         st.markdown("### What each metric measures")
 
         col1, col2 = st.columns(2)
@@ -114,7 +138,7 @@ class ClinicalMetricsPage:
                 _info_card(
                     "Alert Fatigue Rate (FP/day)",
                     "How many false-positive alerts does the model generate per day "
-                    "(based on the test set positive rate and 8-hour shifts)?",
+                    "(based on the test set positive rate and patient-hours in the dataset)?",
                     "Alarm fatigue is a documented patient safety problem. If a NICU of 20 beds "
                     "gets 40 false sepsis alerts per shift, staff start ignoring them — and miss "
                     "real ones. This metric tells you the operational burden of the model.",
@@ -155,19 +179,6 @@ class ClinicalMetricsPage:
 
         st.markdown("---")
 
-        # ── Threshold explanation ─────────────────────────────────────────
-        st.markdown("""
-        <div style="background:#E3F2FD;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;
-             padding:14px 18px;color:#0D47A1;margin-bottom:20px;">
-        <b>About the threshold slider below:</b> The model outputs a probability (0–1).
-        Calling a patient "high risk" requires choosing a cutoff. A lower threshold catches
-        more sepsis cases (higher recall) but triggers more false alarms. The slider lets you
-        explore this trade-off. The four metrics above are computed from the full ROC curve
-        and don't depend on this threshold — but precision, recall, and F1 do.
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── Check dependencies ────────────────────────────────────────────
         if not _CLINICAL_AVAILABLE:
             st.error(
                 "`clinical_metrics` module could not be imported. "
@@ -175,97 +186,178 @@ class ClinicalMetricsPage:
             )
             return
 
-        # ── Load eval files ───────────────────────────────────────────────
-        loaded = {}
-        for name, path in [("Federated Model", EVAL_FEDERATED_JSON),
-                            ("Local Model", EVAL_LOCAL_JSON)]:
-            if Path(path).exists():
-                try:
-                    with open(path) as f:
-                        loaded[name] = json.load(f)
-                except Exception:
-                    pass
+        # ── Load all available eval files ─────────────────────────────
+        available = {}   # display_name -> (data, color, calibrated_threshold)
+        for fname, display_name, color, cal_threshold in KNOWN_EVAL_FILES:
+            data = _load(str(ROOT / fname))
+            if data is not None:
+                available[display_name] = (data, color, cal_threshold)
 
-        if not loaded:
+        if not available:
             st.warning("No evaluation results found. Run the pipeline first.")
-            st.code("python scripts/run_pipeline.py")
+            st.code("python src/evaluate.py --index data/splits/test_index.pt "
+                    "--ckpt server_out/global_best.pt --model grud "
+                    "--out_file eval_results_federated.json")
             return
+
+        # ── Summary table (all models, calibrated thresholds) ─────────
+        st.markdown("### Clinical metrics summary — all models")
+        st.markdown(
+            '<span style="font-size:0.85rem;color:#64748B;">Computed at each model\'s '
+            'calibrated threshold. Threshold-independent metrics (Sens@Spec, Spec@Sens) '
+            'reflect the full ROC curve.</span>',
+            unsafe_allow_html=True,
+        )
+
+        # Separate patient-level from windowed
+        patient_models = {k: v for k, v in available.items() if "windowed" not in k.lower()}
+        windowed_models = {k: v for k, v in available.items() if "windowed" in k.lower()}
+
+        def _build_summary_rows(models_dict):
+            rows = []
+            for name, (data, color, cal_thr) in models_dict.items():
+                y_true = np.array(data["y_true"])
+                y_prob = np.array(data["y_prob"])
+                if len(np.unique(y_true)) < 2:
+                    continue
+                sens95, _ = sensitivity_at_specificity(y_true, y_prob, 0.95)
+                spec90, _ = specificity_at_sensitivity(y_true, y_prob, 0.90)
+                y_pred = (y_prob >= cal_thr).astype(int)
+                n = len(y_true)
+                afr = alert_fatigue_rate(y_true, y_pred, patient_hours=float(n * 48))
+                nna = nna_lert(y_true, y_pred)
+                tp = int(((y_pred == 1) & (y_true == 1)).sum())
+                fp = int(((y_pred == 1) & (y_true == 0)).sum())
+                fn = int(((y_pred == 0) & (y_true == 1)).sum())
+                sens = tp / max(1, tp + fn)
+                spec = (n - tp - fp - fn) / max(1, n - tp - fn)  # TN / (TN+FP)
+                ppv = tp / max(1, tp + fp)
+                rows.append({
+                    "Model": name,
+                    "Threshold": f"{cal_thr:.4f}",
+                    "AUROC": f"{data.get('auroc', float('nan')):.4f}",
+                    "Sens@95Spec": f"{sens95:.3f}",
+                    "Spec@90Sens": f"{spec90:.3f}",
+                    "Sensitivity": f"{sens:.3f}",
+                    "Specificity": f"{spec:.3f}",
+                    "PPV": f"{ppv:.3f}",
+                    "NNAlert": f"{nna:.1f}",
+                    "FA/day": f"{afr:.2f}",
+                })
+            return rows
+
+        if patient_models:
+            import pandas as pd
+            rows = _build_summary_rows(patient_models)
+            if rows:
+                st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
+
+        if windowed_models:
+            st.markdown(
+                '<div style="background:#FFF8E1;border-left:4px solid #FF9800;border-radius:0 8px 8px 0;'
+                'padding:10px 16px;color:#E65100;margin:12px 0;font-size:0.86rem;">'
+                '<b>Early Warning model below (different task)</b> — predicts sepsis onset in next 6h '
+                'from a 12h window. Not directly comparable to the patient-level models above.</div>',
+                unsafe_allow_html=True,
+            )
+            rows = _build_summary_rows(windowed_models)
+            if rows:
+                import pandas as pd
+                st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
+
+        st.markdown("---")
+
+        # ── Interactive threshold explorer ────────────────────────────
+        st.markdown("### Interactive threshold explorer")
+        st.markdown(
+            '<div style="background:#E3F2FD;border-left:4px solid #2196F3;border-radius:0 8px 8px 0;'
+            'padding:14px 18px;color:#0D47A1;margin-bottom:20px;">'
+            '<b>About the threshold slider:</b> The model outputs a probability (0–1). '
+            'Calling a patient "high risk" requires choosing a cutoff. A lower threshold catches '
+            'more sepsis cases (higher recall) but triggers more false alarms. The slider lets you '
+            'explore this trade-off. The Sens@Spec and Spec@Sens metrics above are threshold-independent '
+            '— they reflect the full ROC curve, not a single cutoff.</div>',
+            unsafe_allow_html=True,
+        )
+
+        model_name = st.selectbox("Select model:", list(available.keys()))
+        data, color, cal_thr = available[model_name]
 
         threshold = st.slider(
             "Decision threshold",
-            0.0, 1.0, 0.5, 0.01,
-            help="Adjusts precision/recall/F1 below. Sensitivity@spec and Specificity@sens are threshold-independent.",
+            0.0, 1.0, float(cal_thr), 0.01,
+            help="Adjusts precision/recall/F1 below. Sens@Spec and Spec@Sens are threshold-independent.",
         )
 
-        for model_name, data in loaded.items():
-            y_true = np.array(data.get("y_true", []))
-            y_prob = np.array(data.get("y_prob", []))
-            if len(y_true) == 0:
-                continue
+        y_true = np.array(data.get("y_true", []))
+        y_prob = np.array(data.get("y_prob", []))
 
-            st.markdown(f"### {model_name}")
-            metrics = compute_all(y_true, y_prob, threshold=threshold)
+        if len(y_true) == 0:
+            st.warning("No y_true/y_prob data in this eval file.")
+            return
 
-            if "error" in metrics:
-                st.warning(f"Cannot compute metrics: {metrics['error']}")
-                st.divider()
-                continue
+        metrics = compute_all(y_true, y_prob, threshold=threshold,
+                              patient_hours=float(len(y_true) * 48))
 
-            # Primary clinical metrics row
-            c1, c2, c3, c4 = st.columns(4)
-            sens95 = metrics.get("sensitivity_at_95spec", float("nan"))
-            spec90 = metrics.get("specificity_at_90sens", float("nan"))
-            af     = metrics.get("alert_fatigue_rate_per_day", float("nan"))
-            nna    = metrics.get("nn_alert", float("nan"))
+        if "error" in metrics:
+            st.warning(f"Cannot compute metrics: {metrics['error']}")
+            return
 
-            c1.markdown(_metric_display(
-                f"{sens95:.3f}", "Sensitivity @ 95% Spec",
-                "Catch rate at low false-alarm setting", "#1565C0",
-            ), unsafe_allow_html=True)
-            c2.markdown(_metric_display(
-                f"{spec90:.3f}", "Specificity @ 90% Sens",
-                "False-alarm rate at high-recall setting", "#1B5E20",
-            ), unsafe_allow_html=True)
-            c3.markdown(_metric_display(
-                f"{af:.2f}", "Alert Fatigue (FP/day)",
-                "False alerts per day operational burden", "#E65100",
-            ), unsafe_allow_html=True)
-            c4.markdown(_metric_display(
-                f"{nna:.1f}", "NNAlert",
-                "Investigations per confirmed case", "#6A1B9A",
-            ), unsafe_allow_html=True)
+        # Primary clinical metrics row
+        c1, c2, c3, c4 = st.columns(4)
+        sens95, _ = sensitivity_at_specificity(y_true, y_prob, 0.95)
+        spec90, _ = specificity_at_sensitivity(y_true, y_prob, 0.90)
+        af  = metrics.get("alert_fatigue_rate_per_day", float("nan"))
+        nna = metrics.get("nn_alert", float("nan"))
 
-            st.markdown("<br>", unsafe_allow_html=True)
+        c1.markdown(_metric_display(
+            f"{sens95:.3f}", "Sensitivity @ 95% Spec",
+            "Catch rate at low false-alarm setting", "#1565C0",
+        ), unsafe_allow_html=True)
+        c2.markdown(_metric_display(
+            f"{spec90:.3f}", "Specificity @ 90% Sens",
+            "False-alarm rate at high-recall setting", "#1B5E20",
+        ), unsafe_allow_html=True)
+        c3.markdown(_metric_display(
+            f"{af:.2f}", "Alert Fatigue (FP/day)",
+            "False alerts per day operational burden", "#E65100",
+        ), unsafe_allow_html=True)
+        c4.markdown(_metric_display(
+            f"{nna:.1f}", "NNAlert",
+            "Investigations per confirmed case", "#6A1B9A",
+        ), unsafe_allow_html=True)
 
-            # Threshold-dependent metrics
-            st.markdown(f"**At threshold = {threshold:.2f}:**")
-            c5, c6, c7, c8 = st.columns(4)
-            c5.metric("Precision", f"{metrics.get('precision', float('nan')):.3f}",
-                      help="Of all patients flagged, what fraction truly have sepsis?")
-            c6.metric("Recall", f"{metrics.get('recall', float('nan')):.3f}",
-                      help="Of all true sepsis patients, what fraction were flagged?")
-            c7.metric("F1-Score", f"{metrics.get('f1', float('nan')):.3f}",
-                      help="Harmonic mean of precision and recall")
-            c8.metric("Specificity", f"{1 - metrics.get('fp', 0) / max(metrics.get('tn', 0) + metrics.get('fp', 0), 1):.3f}",
-                      help="Of all healthy patients, what fraction were correctly cleared?")
+        st.markdown("<br>", unsafe_allow_html=True)
 
-            # Confusion matrix
-            with st.expander("Confusion matrix at this threshold"):
-                tn = metrics.get("tn", 0)
-                fp = metrics.get("fp", 0)
-                fn = metrics.get("fn", 0)
-                tp = metrics.get("tp", 0)
-                total = tn + fp + fn + tp
-                st.markdown(f"""
-                | | Predicted: No Sepsis | Predicted: Sepsis |
-                |---|---|---|
-                | **Actual: No Sepsis** | ✅ TN = {tn} ({tn/max(total,1):.1%}) | ❌ FP = {fp} ({fp/max(total,1):.1%}) |
-                | **Actual: Sepsis** | ❌ FN = {fn} ({fn/max(total,1):.1%}) | ✅ TP = {tp} ({tp/max(total,1):.1%}) |
+        # Threshold-dependent metrics
+        st.markdown(f"**At threshold = {threshold:.2f}:**")
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("Precision", f"{metrics.get('precision', float('nan')):.3f}",
+                  help="Of all patients flagged, what fraction truly have sepsis?")
+        c6.metric("Recall", f"{metrics.get('recall', float('nan')):.3f}",
+                  help="Of all true sepsis patients, what fraction were flagged?")
+        c7.metric("F1-Score", f"{metrics.get('f1', float('nan')):.3f}",
+                  help="Harmonic mean of precision and recall")
+        tn = metrics.get("tn", 0)
+        fp = metrics.get("fp", 0)
+        c8.metric("Specificity", f"{tn / max(tn + fp, 1):.3f}",
+                  help="Of all healthy patients, what fraction were correctly cleared?")
 
-                - **TN** (True Negative): healthy patient correctly cleared — no alert, no wasted time
-                - **FP** (False Positive): healthy patient incorrectly flagged — wasted clinical time (alarm fatigue)
-                - **FN** (False Negative): sepsis patient missed — most dangerous outcome
-                - **TP** (True Positive): sepsis patient correctly caught — the whole point of the model
-                """)
+        # Confusion matrix
+        with st.expander("Confusion matrix at this threshold"):
+            tn = metrics.get("tn", 0)
+            fp = metrics.get("fp", 0)
+            fn = metrics.get("fn", 0)
+            tp = metrics.get("tp", 0)
+            total = tn + fp + fn + tp
+            st.markdown(f"""
+            | | Predicted: No Sepsis | Predicted: Sepsis |
+            |---|---|---|
+            | **Actual: No Sepsis** | ✅ TN = {tn} ({tn/max(total,1):.1%}) | ❌ FP = {fp} ({fp/max(total,1):.1%}) |
+            | **Actual: Sepsis** | ❌ FN = {fn} ({fn/max(total,1):.1%}) | ✅ TP = {tp} ({tp/max(total,1):.1%}) |
 
-            st.divider()
+            - **TN** (True Negative): healthy patient correctly cleared — no alert, no wasted time
+            - **FP** (False Positive): healthy patient incorrectly flagged — wasted clinical time (alarm fatigue)
+            - **FN** (False Negative): sepsis patient missed — most dangerous outcome
+            - **TP** (True Positive): sepsis patient correctly caught — the whole point of the model
+            """)
