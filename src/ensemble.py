@@ -81,9 +81,18 @@ def load_ensemble(
 
 
 def _load_state(model: nn.Module, ckpt_path: str):
-    sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    import logging
+    _log = logging.getLogger(__name__)
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     if isinstance(sd, dict) and "model_state" in sd:
         sd = sd["model_state"]
     elif isinstance(sd, dict) and "state_dict" in sd:
         sd = sd["state_dict"]
-    model.load_state_dict(sd, strict=False)
+    try:
+        model.load_state_dict(sd)
+    except Exception:
+        result = model.load_state_dict(sd, strict=False)
+        if result.missing_keys:
+            _log.warning("Ensemble load missing keys: %s", result.missing_keys)
+        if result.unexpected_keys:
+            _log.warning("Ensemble load unexpected keys: %s", result.unexpected_keys)

@@ -74,9 +74,18 @@ def split_into_clients(
         client_folder = os.path.join(out_root, f"client{i + 1}")
         ensure_dir(client_folder)
         selected = [x_paths[j] for j in indices]
+        new_paths = []
         for p in selected:
-            shutil.copy(p, client_folder)
-        new_paths = [os.path.join(client_folder, os.path.basename(p)) for p in selected]
+            from pathlib import Path as _Path
+            dst = os.path.join(client_folder, os.path.basename(p))
+            if os.path.exists(dst):
+                stem, suffix = _Path(p).stem, _Path(p).suffix
+                counter = 1
+                while os.path.exists(dst):
+                    dst = os.path.join(client_folder, f"{stem}_{counter}{suffix}")
+                    counter += 1
+            shutil.copy(p, dst)
+            new_paths.append(dst)
         client_labels = [labels[j] for j in indices]
         torch.save({"x_paths": new_paths, "y": client_labels}, os.path.join(client_folder, "index.pt"))
         pos = sum(client_labels)

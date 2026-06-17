@@ -65,7 +65,7 @@ def get_bootstrapped_ci(y_true, y_prob, n_bootstraps=1000):
             precision, recall, _ = precision_recall_curve(y_true[indices], y_prob[indices])
             # Sort by recall (x-axis)
             idx = np.argsort(recall)
-            interp_precision = interp1d(recall[idx], precision[idx], kind='linear', bounds_error=False, fill_value='extrapolate')(base_recall)
+            interp_precision = interp1d(recall[idx], precision[idx], kind='linear', bounds_error=False, fill_value=(1.0, 0.0))(base_recall)
             precision_bootstraps.append(interp_precision)
 
         except Exception:
@@ -125,6 +125,7 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
     _style()
     plt.figure(figsize=(9, 7))
     
+    y_true = np.array([])  # initialize before loop so PRC baseline uses all data
     for file_idx, filepath in enumerate(results_files):
         if not os.path.exists(filepath):
             print(f"[WARN] File not found, skipping: {filepath}")
@@ -133,14 +134,15 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
         with open(filepath, 'r') as f:
             data = json.load(f)
 
-        y_true = np.array(data.get('y_true'))
-        y_prob = np.array(data.get('y_prob'))
-        model_name = data.get('model_name', os.path.basename(filepath)).replace('_', ' ').title()
-        color = PALETTE[file_idx % len(PALETTE)]
-        
-        if y_true is None or y_prob is None:
+        y_true_raw = data.get('y_true')
+        y_prob_raw = data.get('y_prob')
+        if y_true_raw is None or y_prob_raw is None:
             print(f"[WARN] File {filepath} is missing 'y_true' or 'y_prob' data. Skipping.")
             continue
+        y_true = np.array(y_true_raw)
+        y_prob = np.array(y_prob_raw)
+        model_name = data.get('model_name', os.path.basename(filepath)).replace('_', ' ').title()
+        color = PALETTE[file_idx % len(PALETTE)]
             
         # Get bootstrapped CIs for scores and bands
         ci_data = get_bootstrapped_ci(y_true, y_prob)

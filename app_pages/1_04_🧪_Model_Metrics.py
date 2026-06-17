@@ -62,10 +62,27 @@ def compute_metrics(data, threshold=0.5):
     y_true = np.array(data["y_true"])
     y_prob = np.array(data["y_prob"])
     y_pred = (y_prob > threshold).astype(int)
+    stored_auroc = data.get("auroc", np.nan)
+    stored_auprc = data.get("auprc", np.nan)
+    if len(np.unique(y_true)) >= 2:
+        from sklearn.metrics import roc_auc_score, average_precision_score
+        recomputed_auroc = float(roc_auc_score(y_true, y_prob))
+        recomputed_auprc = float(average_precision_score(y_true, y_prob))
+        if not np.isnan(stored_auroc) and abs(recomputed_auroc - stored_auroc) > 0.01:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Stored AUROC %.4f differs from recomputed %.4f for %s",
+                stored_auroc, recomputed_auroc, data.get("model_name", "?"),
+            )
+        auroc = recomputed_auroc
+        auprc = recomputed_auprc
+    else:
+        auroc = stored_auroc
+        auprc = stored_auprc
     return {
         "Model":     data.get("model_name", "Model").replace("_", " ").title(),
-        "AUROC":     data.get("auroc",  np.nan),
-        "AUPRC":     data.get("auprc",  np.nan),
+        "AUROC":     auroc,
+        "AUPRC":     auprc,
         "Accuracy":  accuracy_score(y_true, y_pred),
         "F1-Score":  f1_score(y_true, y_pred, zero_division=0),
         "Precision": precision_score(y_true, y_pred, zero_division=0),
@@ -257,41 +274,44 @@ class MetricsPage:
 
             # Radar chart
             st.markdown("#### Normalised metric profile")
-            st.markdown(
-                '<span style="font-size:0.85rem; color:#64748B;">Each axis normalised to [0,1] within the comparison. Shows relative strengths.</span>',
-                unsafe_allow_html=True,
-            )
-            df_norm = df_display.copy()
-            for col in df_norm.columns:
-                rng = df_norm[col].max() - df_norm[col].min()
-                df_norm[col] = ((df_norm[col] - df_norm[col].min()) / rng) if rng != 0 else 0.5
-            fig_radar = go.Figure()
-            for i, (idx, row) in enumerate(df_norm.iterrows()):
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=row.values.tolist() + [row.values[0]],
-                    theta=row.index.tolist() + [row.index[0]],
-                    fill="toself",
-                    name=idx,
-                    line=dict(color=model_colors.get(idx, "#475569"), width=2),
-                    marker=dict(size=6),
-                ))
-            fig_radar.update_layout(
-                polar=dict(
-                    bgcolor="#141827",
-                    radialaxis=dict(visible=True, range=[0, 1],
-                                    gridcolor="#1E2A45", tickfont=dict(color="#64748B"),
-                                    linecolor="#1E2A45"),
-                    angularaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#94A3B8"),
-                                     linecolor="#1E2A45"),
-                ),
-                showlegend=True, height=480,
-                margin=dict(t=40, b=20),
-                font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
-                paper_bgcolor="rgba(0,0,0,0)",
-                legend=dict(bgcolor="rgba(20,24,39,0.9)", bordercolor="#1E2A45", borderwidth=1,
-                            font=dict(color="#94A3B8")),
-            )
-            st.plotly_chart(fig_radar, width='stretch')
+            if len(df_display) < 2:
+                st.info("Radar chart requires at least 2 models to compare.")
+            else:
+                st.markdown(
+                    '<span style="font-size:0.85rem; color:#64748B;">Each axis normalised to [0,1] within the comparison. Shows relative strengths.</span>',
+                    unsafe_allow_html=True,
+                )
+                df_norm = df_display.copy()
+                for col in df_norm.columns:
+                    rng = df_norm[col].max() - df_norm[col].min()
+                    df_norm[col] = ((df_norm[col] - df_norm[col].min()) / rng) if rng != 0 else 0.5
+                fig_radar = go.Figure()
+                for i, (idx, row) in enumerate(df_norm.iterrows()):
+                    fig_radar.add_trace(go.Scatterpolar(
+                        r=row.values.tolist() + [row.values[0]],
+                        theta=row.index.tolist() + [row.index[0]],
+                        fill="toself",
+                        name=idx,
+                        line=dict(color=model_colors.get(idx, "#475569"), width=2),
+                        marker=dict(size=6),
+                    ))
+                fig_radar.update_layout(
+                    polar=dict(
+                        bgcolor="#141827",
+                        radialaxis=dict(visible=True, range=[0, 1],
+                                        gridcolor="#1E2A45", tickfont=dict(color="#64748B"),
+                                        linecolor="#1E2A45"),
+                        angularaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#94A3B8"),
+                                         linecolor="#1E2A45"),
+                    ),
+                    showlegend=True, height=480,
+                    margin=dict(t=40, b=20),
+                    font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    legend=dict(bgcolor="rgba(20,24,39,0.9)", bordercolor="#1E2A45", borderwidth=1,
+                                font=dict(color="#94A3B8")),
+                )
+                st.plotly_chart(fig_radar, width='stretch')
 
         with tab2:
             st.markdown("#### ROC and Precision-Recall curves")

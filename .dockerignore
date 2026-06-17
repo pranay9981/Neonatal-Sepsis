@@ -37,5 +37,12 @@ __pycache__/
 # Logs
 *.log
 
+# Tests — not needed in production image
+tests/
+
+# Environment / secrets — never bake into image
+.env
+.env.*
+
 # Misc
 hyper_results/

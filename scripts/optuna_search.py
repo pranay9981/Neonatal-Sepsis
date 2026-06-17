@@ -96,7 +96,7 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str)
     opt = optim.Adam(model.parameters(), lr=lr)
     scheduler = make_warmup_cosine_scheduler(opt, warmup_epochs=2, total_epochs=epochs)
 
-    best_auc = 0.0
+    final_auc = 0.0
     for epoch in range(1, epochs + 1):
         model.train()
         for batch in train_loader:
@@ -123,12 +123,12 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str)
                 y_all.extend(yb.tolist())
 
         auc, _ = safe_metrics(y_all, logits_all)
-        best_auc = max(best_auc, auc)
+        final_auc = auc
         trial.report(auc, epoch)
         if trial.should_prune():
             raise optuna.TrialPruned()
 
-    return best_auc
+    return final_auc
 
 
 def run_optuna(

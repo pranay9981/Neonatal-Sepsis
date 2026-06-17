@@ -15,7 +15,7 @@ try:
         sensitivity_at_specificity,
         specificity_at_sensitivity,
         alert_fatigue_rate,
-        nna_lert,
+        nn_alert,
         compute_all,
     )
     _CLINICAL_AVAILABLE = True
@@ -234,23 +234,21 @@ class ClinicalMetricsPage:
                 y_pred = (y_prob >= cal_thr).astype(int)
                 n = len(y_true)
                 afr = alert_fatigue_rate(y_true, y_pred, patient_hours=float(n * 48))
-                nna = nna_lert(y_true, y_pred)
-                tp = int(((y_pred == 1) & (y_true == 1)).sum())
-                fp = int(((y_pred == 1) & (y_true == 0)).sum())
-                fn = int(((y_pred == 0) & (y_true == 1)).sum())
-                sens = tp / max(1, tp + fn)
-                spec = (n - tp - fp - fn) / max(1, n - tp - fn)  # TN / (TN+FP)
-                ppv = tp / max(1, tp + fp)
+                metrics = compute_all(y_true, y_pred)
+                sens = metrics.get("sensitivity", float("nan"))
+                spec = metrics.get("specificity", float("nan"))
+                ppv = metrics.get("precision", float("nan"))
+                nna = metrics.get("nn_alert", float("nan"))
                 rows.append({
                     "Model": name,
                     "Threshold": f"{cal_thr:.4f}",
                     "AUROC": f"{data.get('auroc', float('nan')):.4f}",
                     "Sens@95Spec": f"{sens95:.3f}",
                     "Spec@90Sens": f"{spec90:.3f}",
-                    "Sensitivity": f"{sens:.3f}",
-                    "Specificity": f"{spec:.3f}",
-                    "PPV": f"{ppv:.3f}",
-                    "NNAlert": f"{nna:.1f}",
+                    "Sensitivity": f"{sens:.3f}" if not np.isnan(sens) else "N/A",
+                    "Specificity": f"{spec:.3f}" if not np.isnan(spec) else "N/A",
+                    "PPV": f"{ppv:.3f}" if not np.isnan(ppv) else "N/A",
+                    "NNAlert": f"{nna:.1f}" if not np.isnan(nna) else "N/A",
                     "FA/day": f"{afr:.2f}",
                 })
             return rows
@@ -260,6 +258,7 @@ class ClinicalMetricsPage:
             rows = _build_summary_rows(patient_models)
             if rows:
                 st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
+                st.caption("FA/day: per patient-day (assuming 48h stay per test patient)")
 
         if windowed_models:
             st.markdown(

@@ -77,6 +77,16 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
 
         # Compute weighted average for non-BN parameters only
         total_examples = sum(n for _, n in weights_results)
+        if total_examples == 0:
+            logger.warning("FedBN: total_examples == 0, skipping round %d", server_round)
+            return None, {}
+        for client_idx, (w, _) in enumerate(weights_results):
+            if len(w) != len(keys):
+                logger.warning(
+                    "FedBN: client %d weight count mismatch (%d vs %d), falling back to FedAvg",
+                    client_idx, len(w), len(keys),
+                )
+                return super().aggregate_fit(server_round, results, failures)
         agg_arrays = []
         first_client_arrays = weights_results[0][0]
         for i, key in enumerate(keys):
@@ -132,5 +142,5 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                     shutil.copyfile(src, dst)
                     self.best_metric = val
                     self.best_round = server_round
-                    logger.info("FedBN: new best (round %d, loss=%.4f)", server_round, -val)
+                    logger.info("FedBN: new best (round %d, %s=%.4f)", server_round, chosen_key, val)
         return agg, metrics

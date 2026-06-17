@@ -79,8 +79,16 @@ optuna_results_grud.json
 cv_results.json
 
 # =============================================================================
+# Credentials / environment — never commit secrets
+# =============================================================================
+.env
+.env.*
+!.env.example
+
+# =============================================================================
 # Exceptions — always track these even if parent folder is ignored
 # =============================================================================
 !**/.gitkeep
+# The following CSV files are SYNTHETIC example data only — never commit real patient data
 !low_risk_patient.csv
 !high_risk_patient.csv

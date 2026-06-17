@@ -103,8 +103,12 @@ def main():
     y_true = np.concatenate(y_true_all)
     y_prob = np.concatenate(y_prob_all)
 
-    auroc = float(roc_auc_score(y_true, y_prob))
-    auprc = float(average_precision_score(y_true, y_prob))
+    if len(np.unique(y_true)) < 2:
+        print("[ENSEMBLE] Warning: test set has only one class — skipping AUC metrics.")
+        auroc = auprc = float("nan")
+    else:
+        auroc = float(roc_auc_score(y_true, y_prob))
+        auprc = float(average_precision_score(y_true, y_prob))
     print(f"[ENSEMBLE] samples={len(y_true)}  AUROC={auroc:.4f}  AUPRC={auprc:.4f}")
 
     result = {

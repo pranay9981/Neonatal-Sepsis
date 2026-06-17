@@ -254,7 +254,7 @@ def train(
 ):
     seed_everything(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = torch.cuda.is_available()
+    use_amp = device.startswith("cuda") and torch.cuda.is_available()
 
     if checkpoint_root is None:
         checkpoint_root = str(_PROJECT_ROOT / "runs")
@@ -361,6 +361,7 @@ def train(
         seen = 0
 
         for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
+            opt.zero_grad()
             if model_name == "transformer":
                 Xb, pad_mask_b, yb = batch
                 Xb, pad_mask_b, yb = Xb.to(device), pad_mask_b.to(device), yb.to(device)
@@ -374,7 +375,6 @@ def train(
                     logits = model(Xb, Mb, Db)
                     loss = loss_fn(logits, yb)
 
-            opt.zero_grad()
             scaler.scale(loss).backward()
             if clip_grad > 0:
                 scaler.unscale_(opt)

@@ -111,6 +111,8 @@ class PatientDataset(Dataset):
                 pad_mask[: T - actual_len] = True
 
             X = self._apply_scaler(X)
+            if actual_len < T:
+                X[: T - actual_len] = 0.0  # restore zeros after normalization shifts them
             X = self._augment(X)
             return X, pad_mask, torch.tensor(y, dtype=torch.float32)
 

@@ -71,6 +71,8 @@ def create_windowed_dataset(
         onset_hour = data.get("onset_hour", None)
 
         # Use pre-computed mask/deltas if available.
+        # Note: delta values are patient-relative (hours since last observation for that feature
+        # within this patient's full ICU stay), NOT window-relative.
         if "mask" in data and "deltas" in data:
             mask_full = data["mask"].numpy().astype(np.float32)
             delta_full = data["deltas"].numpy().astype(np.float32)
@@ -107,7 +109,7 @@ def create_windowed_dataset(
             # Prospective label: 1 if onset is within the next `horizon` hours.
             window_end_abs = t_end_excl - pad_offset  # position in real-time axis
             if onset_hour is not None:
-                label = int(onset_hour >= window_end_abs and onset_hour < window_end_abs + horizon)
+                label = int(onset_hour > window_end_abs and onset_hour <= window_end_abs + horizon)
             else:
                 # Fallback: use per-timestep labels for next horizon hours
                 next_horizon = y_seq[t_end_excl: t_end_excl + horizon]

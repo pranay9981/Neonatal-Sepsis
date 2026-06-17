@@ -10,6 +10,7 @@ Beyond AUROC/AUPRC, clinicians care about:
   - Subgroup performance (gestational age, birth weight, ICULOS quartile)
 """
 from __future__ import annotations
+import warnings
 import numpy as np
 from sklearn.metrics import roc_curve, precision_recall_curve
 
@@ -18,7 +19,12 @@ def sensitivity_at_specificity(y_true, y_prob, target_specificity: float = 0.95)
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     # Exclude sklearn's artificial boundary point (threshold = max_score+1, not a valid probability).
     valid = np.isfinite(thresholds) & (thresholds >= 0.0) & (thresholds <= 1.0)
-    if valid.any():
+    if not valid.any():
+        warnings.warn(
+            "sensitivity_at_specificity: no thresholds in [0,1] — y_prob may be logits, not probabilities.",
+            RuntimeWarning, stacklevel=2,
+        )
+    else:
         fpr, tpr, thresholds = fpr[valid], tpr[valid], thresholds[valid]
     specificity = 1.0 - fpr
     idx = np.argmin(np.abs(specificity - target_specificity))
@@ -28,7 +34,12 @@ def sensitivity_at_specificity(y_true, y_prob, target_specificity: float = 0.95)
 def specificity_at_sensitivity(y_true, y_prob, target_sensitivity: float = 0.90):
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     valid = np.isfinite(thresholds) & (thresholds >= 0.0) & (thresholds <= 1.0)
-    if valid.any():
+    if not valid.any():
+        warnings.warn(
+            "specificity_at_sensitivity: no thresholds in [0,1] — y_prob may be logits, not probabilities.",
+            RuntimeWarning, stacklevel=2,
+        )
+    else:
         fpr, tpr, thresholds = fpr[valid], tpr[valid], thresholds[valid]
     idx = np.argmin(np.abs(tpr - target_sensitivity))
     return float(1.0 - fpr[idx]), float(thresholds[idx])
@@ -41,7 +52,7 @@ def alert_fatigue_rate(y_true, y_pred_binary, patient_hours: float | None = None
     return fp / max(1.0, hours / 24.0)
 
 
-def nna_lert(y_true, y_pred_binary):
+def nn_alert(y_true, y_pred_binary):
     """Number Needed to Alert: alerts per true positive caught."""
     tp = int(((y_pred_binary == 1) & (y_true == 1)).sum())
     alerts = int((y_pred_binary == 1).sum())
@@ -62,15 +73,15 @@ def compute_all(y_true, y_prob, threshold: float = 0.5, patient_hours: float | N
     results["sensitivity_at_95spec"] = sens_at_95spec
     results["specificity_at_90sens"] = spec_at_90sens
     results["alert_fatigue_rate_per_day"] = alert_fatigue_rate(y_true, y_pred, patient_hours)
-    results["nn_alert"] = nna_lert(y_true, y_pred)
+    results["nn_alert"] = nn_alert(y_true, y_pred)
 
     tp = int(((y_pred == 1) & (y_true == 1)).sum())
     fp = int(((y_pred == 1) & (y_true == 0)).sum())
     fn = int(((y_pred == 0) & (y_true == 1)).sum())
     tn = int(((y_pred == 0) & (y_true == 0)).sum())
     results["tp"], results["fp"], results["fn"], results["tn"] = tp, fp, fn, tn
-    results["precision"] = tp / max(1, tp + fp)
-    results["recall"] = tp / max(1, tp + fn)
+    results["precision"] = float(tp) / (tp + fp) if (tp + fp) > 0 else float("nan")
+    results["recall"] = float(tp) / (tp + fn) if (tp + fn) > 0 else float("nan")
     results["f1"] = 2 * tp / max(1, 2 * tp + fp + fn)
     return results
 

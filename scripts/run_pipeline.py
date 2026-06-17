@@ -124,6 +124,16 @@ def main():
     else:
         print(f"\n[PIPELINE] Step 2/7 — Skipping splits (already frozen: {splits_dir})")
 
+    # ── Step 2b: Recompute scaler from train patients only (prevents test leakage) ─
+    if train_index.exists():
+        print("\n[PIPELINE] Step 2b — Recomputing scaler from train patients only...")
+        import sys as _sys
+        _sys.path.insert(0, str(SRC_DIR))
+        from parallel_preprocess import recompute_scaler_from_index
+        recompute_scaler_from_index(str(train_index), str(processed_dir))
+    else:
+        print("\n[PIPELINE] Step 2b — Skipping scaler recompute (train_index not available yet)")
+
     # Determine which index to use for local training (train split if available)
     local_train_index = str(train_index) if train_index.exists() else str(index_path)
 

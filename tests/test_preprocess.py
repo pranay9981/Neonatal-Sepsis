@@ -115,9 +115,19 @@ class TestProcessFile:
             assert torch.isfinite(d["X"]).all()
         os.unlink(path)
 
-    def test_empty_file_returns_failure(self):
+    def test_zero_row_file_returns_failure(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".psv", delete=False) as f:
-            f.write("HR|O2Sat\n")  # header only
+            f.write("HR|O2Sat\n")  # header only, no data rows
+            path = f.name
+        with tempfile.TemporaryDirectory() as out_dir:
+            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            assert not ok
+        os.unlink(path)
+
+    def test_missing_columns_returns_failure(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".psv", delete=False) as f:
+            # File has no SepsisLabel and no ICULOS — process_file cannot form a valid sequence
+            f.write("NotAFeature|AnotherFake\n1.0|2.0\n")
             path = f.name
         with tempfile.TemporaryDirectory() as out_dir:
             fp, ok, info = process_file(path, out_dir, seq_len=48)

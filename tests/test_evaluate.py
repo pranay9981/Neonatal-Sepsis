@@ -81,8 +81,10 @@ class TestEvaluateSingleCkpt:
             n_features=40,
             seq_len=48,
         )
-        assert result["auroc"] is None or 0.0 <= result["auroc"] <= 1.0
-        assert result["auprc"] is None or 0.0 <= result["auprc"] <= 1.0
+        assert isinstance(result["auroc"], float), f"Expected float AUROC, got {type(result['auroc'])}"
+        assert 0.0 <= result["auroc"] <= 1.0, f"AUROC out of range: {result['auroc']}"
+        assert isinstance(result["auprc"], float), f"Expected float AUPRC, got {type(result['auprc'])}"
+        assert 0.0 <= result["auprc"] <= 1.0, f"AUPRC out of range: {result['auprc']}"
 
     def test_sample_count(self, tmp_path):
         n = 30

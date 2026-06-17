@@ -26,8 +26,8 @@ class GRUD(nn.Module):
         self.n_features = n_features
         self.hidden_size = hidden_size
 
-        # Per-feature input decay: delta (F,) → gamma_x (F,)
-        self.W_gamma_x = nn.Linear(n_features, n_features, bias=True)
+        # Per-feature input decay: one scalar weight per feature (GRU-D paper §3.2)
+        self.W_gamma_x = nn.Parameter(torch.zeros(n_features))
 
         # Hidden-state decay: scalar mean-delta (1,) → gamma_h (H,)
         self.W_gamma_h = nn.Linear(1, hidden_size, bias=True)
@@ -69,6 +69,8 @@ class GRUD(nn.Module):
         Returns logits: (B,)
         """
         B, T, _ = x.shape
+        if T == 0:
+            raise ValueError("GRU-D forward received an empty sequence (T=0).")
         device = x.device
         x_mean = self.x_mean.to(device)  # (n_features,)
 
@@ -84,7 +86,7 @@ class GRUD(nn.Module):
             dt = deltas[:, t, :]  # (B, F)
 
             # Per-feature input decay coefficient γ_x ∈ (0, 1]
-            gamma_x = torch.exp(-F.relu(self.W_gamma_x(dt)))  # (B, F)
+            gamma_x = torch.exp(-F.relu(self.W_gamma_x * dt))  # (B, F)
 
             # GRU-D imputation: x̂ = m⊙x + (1−m)⊙(γ_x⊙x_last + (1−γ_x)⊙x̄)
             x_hat = mt * xt + (1.0 - mt) * (gamma_x * x_last + (1.0 - gamma_x) * x_mean)

@@ -141,3 +141,5 @@ class TestPreprocessYSeq:
         d = torch.load(out_path, weights_only=False)
         assert "y" in d
         assert d["y"] == 1, "Patient should be labeled positive"
+        assert "y_seq" in d, "y_seq key missing from saved window"
+        assert d["y_seq"] is not None

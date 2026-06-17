@@ -54,7 +54,7 @@ _start_time: float = time.time()
 
 MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")  # "transformer" or "grud"
 MC_SAMPLES = int(os.environ.get("SEPSIS_MC_SAMPLES", "0"))
-AUDIT_LOG = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(MODEL_PATH).parent / "predictions.jsonl"))
+AUDIT_LOG = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
 
 if _PROMETHEUS:
     _pred_counter = Counter("sepsis_predictions_total", "Total predictions served")
@@ -87,7 +87,11 @@ def _load_artifacts():
     try:
         m.load_state_dict(raw)
     except Exception:
-        m.load_state_dict(raw, strict=False)
+        result = m.load_state_dict(raw, strict=False)
+        if result.missing_keys:
+            _logger.warning("Model load missing keys: %s", result.missing_keys)
+        if result.unexpected_keys:
+            _logger.warning("Model load unexpected keys: %s", result.unexpected_keys)
     m.eval()
     _model = m
     _model_version = p.stem
@@ -109,7 +113,10 @@ def _append_audit(entry: dict):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _load_artifacts()
+    try:
+        _load_artifacts()
+    except FileNotFoundError as e:
+        _logger.error("Model not found at startup: %s — server will start with _model=None and return 503 on /predict", e)
     yield
 
 
@@ -204,17 +211,17 @@ def predict(req: PredictRequest):
 
     prob_low = prob_high = None
     with torch.no_grad():
-        if MC_SAMPLES > 1:
-            with _mc_lock:
+        with _mc_lock:
+            if MC_SAMPLES > 1:
                 _model.train()
                 mc_probs = [float(torch.sigmoid(_forward()).squeeze()) for _ in range(MC_SAMPLES)]
                 _model.eval()
-            prob = float(np.mean(mc_probs))
-            prob_low = float(np.percentile(mc_probs, 2.5))
-            prob_high = float(np.percentile(mc_probs, 97.5))
-        else:
-            logit = _forward().squeeze()
-            prob = float(torch.sigmoid(logit).item())
+                prob = float(np.mean(mc_probs))
+                prob_low = float(np.percentile(mc_probs, 2.5))
+                prob_high = float(np.percentile(mc_probs, 97.5))
+            else:
+                logit = _forward().squeeze()
+                prob = float(torch.sigmoid(logit).item())
 
     risk = "HIGH" if prob >= 0.5 else ("MODERATE" if prob >= 0.25 else "LOW")
     alert = prob >= 0.5
@@ -222,12 +229,13 @@ def predict(req: PredictRequest):
 
     if _PROMETHEUS:
         _pred_counter.inc()
-        _latency_hist.observe((time.time() - t0))
+        _latency_hist.observe(latency_ms / 1000)
         if alert:
             _alert_counter.inc()
 
+    import hashlib
     _append_audit({
-        "patient_id": req.patient_id,
+        "patient_id": hashlib.sha256(str(req.patient_id).encode()).hexdigest()[:16] if req.patient_id else None,
         "probability": prob,
         "risk_level": risk,
         "alert": alert,

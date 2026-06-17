@@ -2,23 +2,23 @@ name: CI
 
 on:
   push:
-    branches: [improvements/v2]
+    branches: [improvements/v2, master]
   pull_request:
-    branches: [improvements/v2]
+    branches: [improvements/v2, master]
 
 jobs:
   test:
-    name: Test suite (Python 3.11, CPU)
+    name: Test suite (Python 3.13, CPU)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
           cache: pip
 
       - name: Install PyTorch (CPU-only, avoids 2 GB CUDA download)
@@ -28,4 +28,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests with coverage
-        run: python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
+        run: python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=60

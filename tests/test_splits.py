@@ -94,7 +94,7 @@ class TestCreateSplits:
         assert abs(sizes["test"] / total - 0.15) < 0.05
 
     def test_both_classes_in_all_splits(self, tmp_path):
-        idx, _, _ = _make_index(tmp_path, n=40, n_pos=10)
+        idx, _, _ = _make_index(tmp_path, n=60, n_pos=15)
         out = tmp_path / "splits"
         create_splits(idx, str(out))
         for name in ("train", "val", "test"):

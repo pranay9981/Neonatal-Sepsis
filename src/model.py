@@ -1,11 +1,15 @@
 # src/model.py
 import math
+import logging
 import torch
 import torch.nn as nn
+
+_logger = logging.getLogger(__name__)
 
 
 def _sinusoidal_pos_enc(seq_len: int, d_model: int) -> torch.Tensor:
     """Return (1, seq_len, d_model) sinusoidal positional encoding."""
+    assert d_model % 2 == 0, f"d_model must be even for sinusoidal encoding, got {d_model}"
     pe = torch.zeros(seq_len, d_model)
     pos = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
     div = torch.exp(
@@ -87,6 +91,11 @@ class TimeSeriesTransformer(nn.Module):
         if seq_total <= P:
             x = x + self.pos_emb[:, :seq_total, :]
         else:
+            _logger.warning(
+                "Input sequence length %d exceeds trained pos_emb length %d; "
+                "tokens beyond position %d receive no positional encoding.",
+                seq_total, P, P,
+            )
             x = torch.cat(
                 [x[:, :P, :] + self.pos_emb, x[:, P:, :]], dim=1
             )

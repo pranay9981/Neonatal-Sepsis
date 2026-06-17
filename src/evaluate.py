@@ -227,7 +227,7 @@ def npz_to_pt_and_state_dict(npz_path: str, model):
 # -------------------------
 # Evaluate helper
 # -------------------------
-def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_features=None, seq_len=None, out_file=None):
+def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_features=None, seq_len=None, out_file=None, scaler_path=None):
     """
     Evaluate one checkpoint (pt or npz). If npz, attempt conversion->pt (and save .pt).
     Returns dict { 'ckpt': path, 'auroc': val, 'auprc': val, 'n_samples': n } or raises.
@@ -238,7 +238,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
     # We must determine n_features and seq_len for the model
     # If not provided, infer them from the dataset *before* loading the model
     
-    ds = PatientDataset(index_path, mode="transformer" if model_name=="transformer" else "grud")
+    ds = PatientDataset(index_path, mode="transformer" if model_name=="transformer" else "grud", scaler_path=scaler_path)
     if n_features is None:
         try:
             x0, *_ = ds[0]
@@ -264,7 +264,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
     if ckpt_path.endswith(".pt") or ckpt_path.endswith(".pth"):
         if not os.path.exists(ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-        sd = torch.load(ckpt_path, map_location="cpu")
+        sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         
         # Handle different .pt save formats
         if "model_state" in sd and isinstance(sd["model_state"], dict):
@@ -361,7 +361,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
 # -------------------------
 # Main entrypoint
 # -------------------------
-def evaluate(index_path, ckpt_input, model_name, device="cpu", n_features=None, seq_len=None, out_file=None):
+def evaluate(index_path, ckpt_input, model_name, device="cpu", n_features=None, seq_len=None, out_file=None, scaler_path=None):
     """
     ckpt_input can be:
       - path to a single .pt or .npz
@@ -420,9 +420,8 @@ if __name__ == "__main__":
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--n_features", type=int, default=None)
     ap.add_argument("--seq_len", type=int, default=None)
-    # --- START OF MODIFICATION ---
+    ap.add_argument("--scaler_path", type=str, default=None, help="Path to scaler.json for feature normalization")
     ap.add_argument("--out_file", type=str, default=None, help="Optional: path to save detailed results JSON for plotting")
-    # --- END OF MODIFICATION ---
-    
+
     args = ap.parse_args()
-    evaluate(args.index, args.ckpt, args.model, device=args.device, n_features=args.n_features, seq_len=args.seq_len, out_file=args.out_file)
+    evaluate(args.index, args.ckpt, args.model, device=args.device, n_features=args.n_features, seq_len=args.seq_len, out_file=args.out_file, scaler_path=args.scaler_path)

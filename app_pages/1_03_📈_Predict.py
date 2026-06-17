@@ -26,7 +26,11 @@ try:
         N_FEATURES,
         SEQ_LEN,
     )
-except Exception:
+except Exception as _import_err:
+    import logging as _import_logging
+    _import_logging.getLogger(__name__).warning(
+        "Could not import model/config modules: %s", _import_err
+    )
     TimeSeriesTransformer = None
     GRUD = None
     _MODEL_PATH = "server_out/global_best.pt"
@@ -120,7 +124,7 @@ def load_model(model_path: str, n_features: int = N_FEATURES, seq_len: int = SEQ
         m.eval()
         return m, None
     except Exception as e:
-        return None, f"Error loading model: {e}"
+        return None, "Error loading model — check server logs."
 
 
 @st.cache_data
@@ -342,6 +346,11 @@ class PredictPage:
     @staticmethod
     def render():
         # ── Page header ───────────────────────────────────────────────────────
+        if GRUD is None and TimeSeriesTransformer is None:
+            st.error(
+                "Model imports failed. The prediction page is unavailable — check server logs for details."
+            )
+            return
         st.markdown("""
         <div style="margin-bottom:28px; padding-bottom:16px; border-bottom:1px solid #1E2A45;">
           <div style="display:inline-block; background:rgba(6,182,212,0.12); color:#22D3EE;
@@ -607,7 +616,7 @@ class PredictPage:
                         "Consider blood cultures, CBC, CRP/PCT, and early antibiotic coverage "
                         "per local protocol. Increase monitoring frequency."
                     )
-                elif prob > threshold * 0.6:
+                elif prob > 0.25:
                     banner_bg     = "rgba(245,158,11,0.10)"
                     banner_border = "#F59E0B"
                     banner_color  = "#FCD34D"
@@ -710,8 +719,8 @@ class PredictPage:
                         unsafe_allow_html=True,
                     )
                     if eval_data:
-                        arr_probs = np.array(eval_data["y_prob"])
-                        arr_true  = np.array(eval_data["y_true"])
+                        arr_probs = np.array(eval_data.get("y_prob") or [])
+                        arr_true  = np.array(eval_data.get("y_true") or [])
                         st.pyplot(plot_prediction_histogram(
                             arr_probs[arr_true == 0], arr_probs[arr_true == 1], prob
                         ))

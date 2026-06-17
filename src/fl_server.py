@@ -31,7 +31,6 @@ import argparse
 import os
 import math
 import json
-import tempfile
 from typing import List, Any, Dict
 
 import numpy as np
@@ -86,7 +85,7 @@ def state_dict_to_ndarrays_by_order(sd: Dict[str, torch.Tensor]) -> List[np.ndar
     """
     arrays = []
     for k in sd.keys():
-        t = sd[k].cpu().numpy()
+        t = sd[k].cpu().detach().numpy()
         arrays.append(t)
     return arrays
 
@@ -157,6 +156,7 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         self.best_metric_value = None
         self.best_round = None
         self.best_path = None
+        self.best_chosen_key = None
 
     def aggregate_fit(self, server_round: int, results, failures):
         """Call parent to aggregate, then save aggregated parameters as PT checkpoint."""
@@ -191,7 +191,9 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         # Save PT checkpoint for this round
         ckpt_path = os.path.join(self.checkpoints_dir, f"global_round_{server_round}.pt")
         try:
-            torch.save(sd, ckpt_path)
+            tmp_path = ckpt_path + ".tmp"
+            torch.save(sd, tmp_path)
+            os.replace(tmp_path, ckpt_path)
             logger.info("Saved PT: %s", ckpt_path)
         except Exception as e:
             logger.warning("Failed to save checkpoint for round %d: %s", server_round, e)
@@ -231,8 +233,9 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         if val is not None and not np.isnan(val):
             # interpret metric sign: for 'loss' and 'val_loss' smaller is better; for AUC-like larger is better
             better = False
-            if self.best_metric_value is None:
+            if self.best_metric_value is None or chosen_key != self.best_chosen_key:
                 better = True
+                self.best_chosen_key = chosen_key
             else:
                 if chosen_key in ["loss", "val_loss"]:
                     better = (val < self.best_metric_value)

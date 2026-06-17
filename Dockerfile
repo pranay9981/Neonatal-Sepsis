@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --prefix /install -r requirements.txt
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
@@ -16,9 +16,8 @@ WORKDIR /app
 # Non-root user for security
 RUN useradd -m -u 1000 appuser
 
-# Copy installed packages from builder into appuser's home (--chown avoids a slow chown -R layer)
-COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
-ENV PATH=/home/appuser/.local/bin:$PATH
+# Copy installed packages from builder into system prefix (stable across minor Python versions)
+COPY --from=builder /install /usr/local
 
 USER appuser
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 try:
-    from pydantic import BaseModel, field_validator
+    from pydantic import BaseModel, field_validator, model_validator
     from pydantic_settings import BaseSettings
 except ImportError:
     from pydantic import BaseModel, validator as field_validator  # type: ignore
+    model_validator = None  # type: ignore
 
 import yaml
 
@@ -20,6 +21,15 @@ class DataConfig(BaseModel):
     n_features: int = 40
     train_ratio: float = 0.70
     val_ratio: float = 0.15
+
+    if model_validator is not None:
+        @model_validator(mode="after")
+        def _check_ratios(self) -> "DataConfig":
+            if self.train_ratio + self.val_ratio > 1.0:
+                raise ValueError(
+                    f"train_ratio + val_ratio must be <= 1.0, got {self.train_ratio + self.val_ratio:.3f}"
+                )
+            return self
 
 
 class ModelConfig(BaseModel):
@@ -66,7 +76,7 @@ class EvaluationConfig(BaseModel):
 class MLflowConfig(BaseModel):
     enabled: bool = False
     experiment: str = "neonatal_sepsis"
-    tracking_uri: str = "mlruns"
+    tracking_uri: str = "sqlite:///mlflow.db"
 
 
 class OptunaConfig(BaseModel):

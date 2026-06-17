@@ -51,9 +51,13 @@ class TestTimeSeriesTransformer:
         out = model(x)
         loss = out.sum()
         loss.backward()
+        has_nonzero_grad = False
         for name, param in model.named_parameters():
             if param.requires_grad:
                 assert param.grad is not None, f"No gradient for {name}"
+                if param.grad.abs().sum() > 0:
+                    has_nonzero_grad = True
+        assert has_nonzero_grad, "All gradients are zero — backward pass may be broken"
 
 
 class TestGRUD:
@@ -91,6 +95,10 @@ class TestGRUD:
         deltas = torch.zeros(2, 16, 10)
         out = model(x, mask, deltas)
         out.sum().backward()
+        has_nonzero_grad = False
         for name, param in model.named_parameters():
             if param.requires_grad:
                 assert param.grad is not None, f"No gradient for {name}"
+                if param.grad.abs().sum() > 0:
+                    has_nonzero_grad = True
+        assert has_nonzero_grad, "All gradients are zero — backward pass may be broken"

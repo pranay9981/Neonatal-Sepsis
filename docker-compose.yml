@@ -3,18 +3,15 @@ services:
     build: .
     ports:
       - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
       - ./server_out:/app/server_out
       - ./server_out_fedbn:/app/server_out_fedbn
       - ./runs:/app/runs
-      - ./eval_results_transformer.json:/app/eval_results_transformer.json
-      - ./eval_results_grud.json:/app/eval_results_grud.json
-      - ./eval_results_federated.json:/app/eval_results_federated.json
-      - ./eval_results_ensemble.json:/app/eval_results_ensemble.json
-      - ./eval_results_fedbn.json:/app/eval_results_fedbn.json
-      - ./eval_results_noniid.json:/app/eval_results_noniid.json
-      - ./eval_results_transformer_fl.json:/app/eval_results_transformer_fl.json
+      - .:/app/host_data:ro
     environment:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
       - SEPSIS_MODEL_TYPE=grud
@@ -32,3 +29,9 @@ services:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
       - SEPSIS_MODEL_TYPE=grud
       - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3

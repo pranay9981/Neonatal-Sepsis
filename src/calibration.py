@@ -14,6 +14,7 @@ Usage:
   ts.save("threshold.json")        # appends temperature key
 """
 import json
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,7 +25,7 @@ class TemperatureScaler:
     def __init__(self):
         self.temperature: float = 1.0
 
-    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 0.01, max_iter: int = 100) -> float:
+    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 1.0, max_iter: int = 100) -> float:
         """
         Optimise temperature to minimise negative log-likelihood on val set.
         Returns the fitted temperature.
@@ -56,8 +57,10 @@ class TemperatureScaler:
         except (FileNotFoundError, json.JSONDecodeError):
             d = {}
         d["temperature"] = self.temperature
-        with open(path, "w") as f:
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(d, f, indent=2)
+        os.replace(tmp_path, path)
 
     @classmethod
     def load(cls, path: str) -> "TemperatureScaler":

@@ -170,6 +170,12 @@ with st.sidebar:
     _status_dot("Local eval JSON", loc_ok)
     _status_dot("Windowed eval JSON", windowed_ok)
 
+    st.markdown('<div style="margin-top:12px;"></div>', unsafe_allow_html=True)
+    if st.button("Clear cache & reload", key="clear_cache_btn", use_container_width=True):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
     st.markdown(
         '<div style="margin-top:16px; font-size:0.7rem; color:#334155;">'
         'v2 &middot; improvements/v2</div>',
@@ -194,14 +200,18 @@ if not module_path.exists():
     st.error(f"Page file not found: {module_path}")
     st.stop()
 
+import logging as _logging
+_page_logger = _logging.getLogger("app.pages")
+
 spec = importlib.util.spec_from_file_location(module_path.stem, str(module_path))
 module = importlib.util.module_from_spec(spec)
-sys.modules[module_path.stem] = module
+sys.modules[f"app_pages.{module_path.stem}"] = module
 
 try:
     spec.loader.exec_module(module)
 except Exception as e:
-    st.exception(e)
+    _page_logger.exception("Failed to load page module %s", module_path.stem)
+    st.error("An unexpected error occurred loading this page — check server logs.")
     st.stop()
 
 # Call the page's render method
@@ -210,11 +220,13 @@ if page_class is not None and hasattr(page_class, "render"):
     try:
         page_class.render()
     except Exception as e:
-        st.exception(e)
+        _page_logger.exception("Error in %s.render()", selected_class)
+        st.error("An unexpected error occurred — check server logs.")
 elif hasattr(module, "render"):
     try:
         module.render()
     except Exception as e:
-        st.exception(e)
+        _page_logger.exception("Error in module.render() for %s", module_path.stem)
+        st.error("An unexpected error occurred — check server logs.")
 else:
     st.error(f"Page '{selected_label}' does not expose a render() method.")

@@ -30,8 +30,9 @@ LABEL_CANDIDATES = ["SepsisLabel","sepsislabel","sepsis_label","sepsis"]
 
 
 def detect_sep_from_file(path):
+    import itertools
     with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-        sample = ''.join([next(f) for _ in range(5)])
+        sample = ''.join(itertools.islice(f, 5))
     if '|' in sample:
         return '|'
     if ',' in sample:
@@ -201,6 +202,10 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
     if y_seq_raw is not None:
         payload['y_seq'] = torch.tensor(y_seq_raw)
     if onset_hour is not None:
+        # Adjust for windowing: if full sequence was cropped to seq_len, onset_hour shifts
+        n_rows_full_final = len(y_seq_full) if 'y_seq_full' in dir() else seq_len
+        if n_rows_full_final > seq_len:
+            onset_hour = max(0, onset_hour - (n_rows_full_final - seq_len))
         payload['onset_hour'] = onset_hour
     torch.save(payload, out_path)
     return (fp, True, out_path)
@@ -226,7 +231,10 @@ def _compute_and_save_scaler(x_paths, out_folder):
     for xp in x_paths:
         try:
             d = torch.load(xp, weights_only=False)
-            all_arrays.append(d['X'].numpy())
+            arr = d['X'].numpy()
+            actual_len = int(d.get('actual_len', arr.shape[0]))
+            # Only use real (non-padded) rows to avoid bias from padding zeros
+            all_arrays.append(arr[-actual_len:] if actual_len < arr.shape[0] else arr)
         except Exception:
             pass
     if not all_arrays:
@@ -281,7 +289,10 @@ def main(raw_folder, out_folder, seq_len=48, nprocs=None):
         for fp, reason in failures[:10]:
             logger.warning("  - %s: %s", fp, reason)
     logger.info("Index written to %s", idx_path)
-    _compute_and_save_scaler(x_paths, out_folder)
+    logger.warning(
+        "Scaler NOT computed here to prevent test-set leakage. "
+        "Call recompute_scaler_from_index(train_index_path, out_folder) after create_splits.py."
+    )
 
 
 if __name__ == "__main__":

@@ -185,4 +185,5 @@ class TestPatientDatasetEdgeCases:
         idx = _make_index(tmp_path, [str(p)], [0])
         ds = PatientDataset(idx, mode="transformer")
         X_out, _, _ = ds[0]
+        assert X_out.shape[0] == 24, f"Expected seq_len=24, got {X_out.shape[0]}"
         assert X_out.shape[1] == 40

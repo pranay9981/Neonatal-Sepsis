@@ -154,7 +154,7 @@ class TestTrainFunction:
         import csv
         with open(csvs[0]) as f:
             rows = list(csv.DictReader(f))
-        assert len(rows) < 10, f"Expected early stopping before 10 epochs, ran {len(rows)}"
+        assert len(rows) <= 2, f"Expected early stopping by epoch 2, ran {len(rows)}"
 
     def test_grud_model(self, tmp_path):
         idx = _write_synthetic_index(tmp_path / "data", n=20)

@@ -81,7 +81,7 @@ class TrainingRunsPage:
             return
 
         run_dirs = sorted(
-            [d for d in RUNS_DIR.iterdir() if d.is_dir()],
+            [d for d in RUNS_DIR.iterdir() if d.is_dir() and not d.is_symlink()],
             key=lambda d: d.stat().st_mtime,
             reverse=True,
         )
@@ -150,8 +150,8 @@ class TrainingRunsPage:
                 unsafe_allow_html=True,
             )
             c1, c2 = st.columns(2)
-            c1.metric("Best AUROC", f"{selected['best_auc']:.4f}" if selected["best_auc"] else "N/A")
-            c2.metric("Best AUPRC", f"{selected['best_ap']:.4f}" if selected["best_ap"] else "N/A")
+            c1.metric("Best AUROC", f"{selected['best_auc']:.4f}" if selected["best_auc"] is not None else "N/A")
+            c2.metric("Best AUPRC", f"{selected['best_ap']:.4f}" if selected["best_ap"] is not None else "N/A")
 
             if selected["best_ckpt"]:
                 st.markdown(

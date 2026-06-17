@@ -124,7 +124,11 @@ def run_cv(
             )
             auroc = result.get("auroc") or 0.0
             auprc = result.get("auprc") or 0.0
-            fold_results.append({"fold": fold, "auroc": auroc, "auprc": auprc, "n_val": len(val_sub)})
+            fold_entry = {"fold": fold, "auroc": auroc, "auprc": auprc, "n_val": len(val_sub)}
+            if "y_true" in result and "y_prob" in result:
+                fold_entry["y_true"] = result["y_true"]
+                fold_entry["y_prob"] = result["y_prob"]
+            fold_results.append(fold_entry)
             logger.info("Fold %d:  AUROC=%.4f  AUPRC=%.4f", fold, auroc, auprc)
 
     if not fold_results:
@@ -134,20 +138,38 @@ def run_cv(
     aucs = np.array([r["auroc"] for r in fold_results])
     aps = np.array([r["auprc"] for r in fold_results])
 
+    # Bootstrap CI on aggregated fold predictions (if available)
+    agg_yt = np.concatenate([r["y_true"] for r in fold_results if "y_true" in r]) if any("y_true" in r for r in fold_results) else None
+    agg_yp = np.concatenate([r["y_prob"] for r in fold_results if "y_prob" in r]) if any("y_prob" in r for r in fold_results) else None
+    if agg_yt is not None and len(np.unique(agg_yt)) >= 2:
+        auroc_lo, auroc_hi = bootstrap_ci(agg_yt, agg_yp, roc_auc_score)
+        auprc_lo, auprc_hi = bootstrap_ci(agg_yt, agg_yp, average_precision_score)
+    else:
+        auroc_lo = auroc_hi = auprc_lo = auprc_hi = float("nan")
+
+    # Strip y_true/y_prob from fold_results before serialising (large arrays)
+    for r in fold_results:
+        r.pop("y_true", None)
+        r.pop("y_prob", None)
+
     summary = {
         "n_folds": n_folds,
         "model": model_name,
         "auroc_mean": float(aucs.mean()),
         "auroc_std": float(aucs.std()),
+        "auroc_ci_95_lo": auroc_lo,
+        "auroc_ci_95_hi": auroc_hi,
         "auprc_mean": float(aps.mean()),
         "auprc_std": float(aps.std()),
+        "auprc_ci_95_lo": auprc_lo,
+        "auprc_ci_95_hi": auprc_hi,
         "folds": fold_results,
     }
 
     print("\n" + "=" * 50)
     print(f"Cross-Validation Results ({n_folds} folds)")
-    print(f"  AUROC:  {aucs.mean():.4f} ± {aucs.std():.4f}")
-    print(f"  AUPRC:  {aps.mean():.4f} ± {aps.std():.4f}")
+    print(f"  AUROC:  {aucs.mean():.4f} ± {aucs.std():.4f}  [95% CI: {auroc_lo:.4f}–{auroc_hi:.4f}]")
+    print(f"  AUPRC:  {aps.mean():.4f} ± {aps.std():.4f}  [95% CI: {auprc_lo:.4f}–{auprc_hi:.4f}]")
     print("=" * 50)
 
     if out_file:

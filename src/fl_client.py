@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 # State-dict ↔ ndarray helpers
 # -----------------------
 def state_dict_to_ndarrays(sd: Dict[str, torch.Tensor]) -> List[np.ndarray]:
-    return [v.cpu().numpy() for v in sd.values()]
+    return [v.cpu().detach().numpy() for v in sd.values()]
 
 
 def ndarrays_to_state_dict_by_order(
@@ -222,6 +222,7 @@ class FlowerClient(fl.client.NumPyClient):
             train_idx, val_idx = next(sss.split(range(n), labels))
         else:
             import random as _rnd
+            _rnd.seed(42)
             idx = list(range(n))
             _rnd.shuffle(idx)
             train_idx, val_idx = idx[:n_train], idx[n_train:]
@@ -257,10 +258,15 @@ class FlowerClient(fl.client.NumPyClient):
         if self.mu > 0 and parameters is not None:
             param_names = {name for name, _ in self.model.named_parameters()}
             sd_keys = list(self.model.state_dict().keys())
-            self.global_tensors = [
-                torch.tensor(arr, dtype=torch.float32)
+            param_dict = {
+                key: torch.tensor(arr, dtype=torch.float32)
                 for key, arr in zip(sd_keys, parameters)
                 if key in param_names
+            }
+            self.global_tensors = [
+                param_dict[n]
+                for n, _ in self.model.named_parameters()
+                if n in param_dict
             ]
         else:
             self.global_tensors = None
@@ -286,11 +292,13 @@ class FlowerClient(fl.client.NumPyClient):
                     yb = yb.to(device).float().view(-1)
                     logits = self.model(Xb, Mb, Db)
 
-                loss = self.loss_fn(logits.view(-1), yb)
+                task_loss = self.loss_fn(logits.view(-1), yb)
 
                 # FedProx proximal regularisation.
                 if self.global_tensors is not None and self.mu > 0:
-                    loss = loss + proximal_term(self.model, self.global_tensors, self.mu)
+                    loss = task_loss + proximal_term(self.model, self.global_tensors, self.mu)
+                else:
+                    loss = task_loss
 
                 self.opt.zero_grad()
                 loss.backward()
@@ -298,7 +306,7 @@ class FlowerClient(fl.client.NumPyClient):
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad)
                 self.opt.step()
 
-                running_loss += float(loss.item()) * len(yb)
+                running_loss += float(task_loss.item()) * len(yb)
                 n_samples += len(yb)
 
             if n_samples > 0:
