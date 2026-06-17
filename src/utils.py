@@ -2,7 +2,6 @@
 import os
 import logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 def ensure_dir(path):
     if not os.path.exists(path):

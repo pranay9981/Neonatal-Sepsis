@@ -71,6 +71,7 @@ results_plot.png
 # Logs & Temp
 # =============================================================================
 *.log
+*.jsonl
 *.tmp
 mlruns/
 mlflow.db

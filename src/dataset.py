@@ -110,6 +110,7 @@ class PatientDataset(Dataset):
             if actual_len < T:
                 pad_mask[: T - actual_len] = True
 
+            # Scaler is applied before augmentation to ensure augmented features remain in z-score space.
             X = self._apply_scaler(X)
             if actual_len < T:
                 X[: T - actual_len] = 0.0  # restore zeros after normalization shifts them
@@ -128,6 +129,7 @@ class PatientDataset(Dataset):
                 X_filled[torch.isnan(X_filled)] = 0.0
                 deltas = _compute_deltas_fallback(mask)
 
+            # Scaler is applied before augmentation to ensure augmented features remain in z-score space.
             X_filled = self._apply_scaler(X_filled)
             X_filled = self._augment(X_filled)
             return X_filled, mask, deltas, torch.tensor(y, dtype=torch.float32)

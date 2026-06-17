@@ -203,16 +203,21 @@ if not module_path.exists():
 import logging as _logging
 _page_logger = _logging.getLogger("app.pages")
 
-spec = importlib.util.spec_from_file_location(module_path.stem, str(module_path))
-module = importlib.util.module_from_spec(spec)
-sys.modules[f"app_pages.{module_path.stem}"] = module
-
-try:
-    spec.loader.exec_module(module)
-except Exception as e:
-    _page_logger.exception("Failed to load page module %s", module_path.stem)
-    st.error("An unexpected error occurred loading this page — check server logs.")
-    st.stop()
+if "page_modules" not in st.session_state:
+    st.session_state["page_modules"] = {}
+mod_key = str(module_path)
+if mod_key not in st.session_state["page_modules"]:
+    spec = importlib.util.spec_from_file_location(module_path.stem, str(module_path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[f"app_pages.{module_path.stem}"] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        _page_logger.exception("Failed to load page module %s", module_path.stem)
+        st.error("An unexpected error occurred loading this page — check server logs.")
+        st.stop()
+    st.session_state["page_modules"][mod_key] = module
+module = st.session_state["page_modules"][mod_key]
 
 # Call the page's render method
 page_class = getattr(module, selected_class, None)

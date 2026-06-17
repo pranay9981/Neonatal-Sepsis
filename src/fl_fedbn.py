@@ -37,7 +37,7 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
     """
 
     BN_KEYWORDS = ("running_mean", "running_var", "num_batches_tracked",
-                   "batchnorm", "batch_norm")
+                   "batchnorm", "batch_norm", "layer_norm", "layernorm")
 
     def __init__(self, model_name: str, n_features: int, seq_len: int,
                  save_dir: str, checkpoints_dir: str,
@@ -96,9 +96,9 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                 else:
                     agg_arrays.append(ref_model.state_dict()[key].cpu().numpy())
             else:
-                weighted = sum(
-                    w[i] * n for w, n in weights_results
-                ) / total_examples
+                weighted = np.zeros_like(weights_results[0][0][i])
+                for w, n in weights_results:
+                    weighted += w[i] * (n / total_examples)
                 agg_arrays.append(weighted)
 
         aggregated_params = ndarrays_to_parameters(agg_arrays)
@@ -112,7 +112,7 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
         except Exception as e:
             logger.warning("FedBN: could not save checkpoint: %s", e)
 
-        return aggregated_params, {}
+        return aggregated_params, {"round": server_round}
 
     def aggregate_evaluate(self, server_round: int, results, failures):
         agg, metrics = super().aggregate_evaluate(server_round, results, failures)
@@ -142,5 +142,5 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                     shutil.copyfile(src, dst)
                     self.best_metric = val
                     self.best_round = server_round
-                    logger.info("FedBN: new best (round %d, %s=%.4f)", server_round, chosen_key, val)
+                    logger.info("FedBN: new best (round %d, metric=%.4f)", server_round, val)
         return agg, metrics

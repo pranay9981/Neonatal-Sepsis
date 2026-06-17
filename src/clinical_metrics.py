@@ -82,7 +82,7 @@ def compute_all(y_true, y_prob, threshold: float = 0.5, patient_hours: float | N
     results["tp"], results["fp"], results["fn"], results["tn"] = tp, fp, fn, tn
     results["precision"] = float(tp) / (tp + fp) if (tp + fp) > 0 else float("nan")
     results["recall"] = float(tp) / (tp + fn) if (tp + fn) > 0 else float("nan")
-    results["f1"] = 2 * tp / max(1, 2 * tp + fp + fn)
+    results["f1"] = 2 * tp / max(1, 2 * tp + fp + fn)  # max(1,...) avoids div-by-zero; returns 0 when no predictions
     return results
 
 

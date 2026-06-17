@@ -103,7 +103,7 @@ class TimeSeriesTransformer(nn.Module):
         # Extend padding mask to cover the CLS position (always attend to it).
         if src_key_padding_mask is not None:
             cls_col = torch.zeros(B, 1, dtype=torch.bool, device=x.device)
-            src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask], dim=1)
+            src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask.to(x.device)], dim=1)
 
         x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
 

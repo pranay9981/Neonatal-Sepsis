@@ -13,6 +13,7 @@ Usage:
   uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -48,6 +49,7 @@ except ImportError:
 
 _model = None
 _scaler = None
+_temperature: float = 1.0
 _model_version: str = "unknown"
 _load_time: float = 0.0
 _start_time: float = time.time()
@@ -55,6 +57,7 @@ _start_time: float = time.time()
 MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")  # "transformer" or "grud"
 MC_SAMPLES = int(os.environ.get("SEPSIS_MC_SAMPLES", "0"))
 AUDIT_LOG = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
+MAX_ROWS = 1000
 
 if _PROMETHEUS:
     _pred_counter = Counter("sepsis_predictions_total", "Total predictions served")
@@ -73,10 +76,23 @@ def _pad_or_trim(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
 
 
 def _load_artifacts():
-    global _model, _scaler, _model_version, _load_time
+    global _model, _scaler, _temperature, _model_version, _load_time
     p = Path(MODEL_PATH)
     if not p.exists():
         raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+
+    expected_sha = os.environ.get("SEPSIS_MODEL_SHA256")
+    if expected_sha:
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        actual = h.hexdigest()
+        if actual != expected_sha:
+            raise RuntimeError(
+                f"Model checksum mismatch! Expected {expected_sha}, got {actual}"
+            )
+
     raw = torch.load(str(p), map_location="cpu", weights_only=False)
     if isinstance(raw, dict) and "model_state" in raw:
         raw = raw["model_state"]
@@ -101,6 +117,15 @@ def _load_artifacts():
     if sp.exists():
         with open(sp) as f:
             _scaler = json.load(f)
+
+    # Load temperature from threshold.json (written by TemperatureScaler.save()).
+    thresh_path = p.parent / "threshold.json"
+    if thresh_path.exists():
+        with open(thresh_path) as f:
+            thresh_data = json.load(f)
+        _temperature = float(thresh_data.get("temperature", 1.0))
+        if _temperature <= 0:
+            _temperature = 1.0
 
 
 def _append_audit(entry: dict):
@@ -141,6 +166,8 @@ class PredictRequest(BaseModel):
     def check_shape(cls, v):
         if len(v) == 0:
             raise ValueError("data must not be empty")
+        if len(v) > MAX_ROWS:
+            raise ValueError(f"Input exceeds {MAX_ROWS} rows; got {len(v)}")
         for row in v:
             if len(row) != N_FEATURES:
                 raise ValueError(f"Each row must have {N_FEATURES} features, got {len(row)}")
@@ -213,14 +240,17 @@ def predict(req: PredictRequest):
     with torch.no_grad():
         with _mc_lock:
             if MC_SAMPLES > 1:
-                _model.train()
-                mc_probs = [float(torch.sigmoid(_forward()).squeeze()) for _ in range(MC_SAMPLES)]
-                _model.eval()
+                _model.train()  # enable dropout
+                try:
+                    mc_probs = [float(torch.sigmoid(_forward()).squeeze()) for _ in range(MC_SAMPLES)]
+                finally:
+                    _model.eval()
                 prob = float(np.mean(mc_probs))
                 prob_low = float(np.percentile(mc_probs, 2.5))
                 prob_high = float(np.percentile(mc_probs, 97.5))
             else:
                 logit = _forward().squeeze()
+                logit = logit / _temperature
                 prob = float(torch.sigmoid(logit).item())
 
     risk = "HIGH" if prob >= 0.5 else ("MODERATE" if prob >= 0.25 else "LOW")
@@ -233,14 +263,19 @@ def predict(req: PredictRequest):
         if alert:
             _alert_counter.inc()
 
-    import hashlib
+    def _bucket_timesteps(n: int) -> str:
+        if n <= 12: return "0-12h"
+        if n <= 24: return "13-24h"
+        if n <= 48: return "25-48h"
+        return "49h+"
+
     _append_audit({
-        "patient_id": hashlib.sha256(str(req.patient_id).encode()).hexdigest()[:16] if req.patient_id else None,
+        "patient_id": hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
         "probability": prob,
         "risk_level": risk,
         "alert": alert,
         "model_version": _model_version,
-        "n_timesteps": n_rows,
+        "n_timesteps": _bucket_timesteps(n_rows),
         "latency_ms": round(latency_ms, 2),
         "timestamp": time.time(),
     })

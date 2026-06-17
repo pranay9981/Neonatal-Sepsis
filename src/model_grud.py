@@ -105,6 +105,7 @@ class GRUD(nn.Module):
             r = torch.sigmoid(self.r_x(x_h) + self.r_h(h_decayed))
             h_tilde = torch.tanh(self.h_x(x_h) + self.h_h(r * h_decayed))
             h = (1.0 - z) * h_decayed + z * h_tilde
-            h = self.dropout(h)
+            # dropout is applied in the classifier block; recurrent dropout on h
+            # between timesteps is non-standard and destabilises training (WR-04)
 
         return self.classifier(h).squeeze(-1)  # (B,)

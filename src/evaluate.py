@@ -167,8 +167,11 @@ def try_smart_map(model, arrays, files):
                 pass
 
     # Third pass: positional embedding style handling (first-dim mismatch)
+    # Only applied to keys that look like positional embeddings to avoid shape collisions.
     for k in keys:
         if k in new_sd:
+            continue
+        if not any(kw in k.lower() for kw in ("pos", "embed", "position")):
             continue
         tgt = sd[k]
         tgt_shape = tuple(tgt.shape)
@@ -238,6 +241,11 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
     # We must determine n_features and seq_len for the model
     # If not provided, infer them from the dataset *before* loading the model
     
+    if "test" not in Path(index_path).stem.lower():
+        logger.warning(
+            "Index file '%s' may not be the held-out test split — pass test_index.pt to avoid optimistic bias.",
+            index_path,
+        )
     ds = PatientDataset(index_path, mode="transformer" if model_name=="transformer" else "grud", scaler_path=scaler_path)
     if n_features is None:
         try:

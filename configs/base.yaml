@@ -28,7 +28,7 @@ training:
   clip_grad: 1.0
   use_focal: false
   focal_gamma: 2.0
-  augment: true
+  augment: true            # augment: only applied when explicitly passed via CLI (--augment flag); ignored during evaluation
   use_temperature_scaling: true
   seed: 42
 

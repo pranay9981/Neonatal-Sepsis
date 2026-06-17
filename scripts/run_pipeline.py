@@ -132,7 +132,8 @@ def main():
         from parallel_preprocess import recompute_scaler_from_index
         recompute_scaler_from_index(str(train_index), str(processed_dir))
     else:
-        print("\n[PIPELINE] Step 2b — Skipping scaler recompute (train_index not available yet)")
+        print("\n[PIPELINE] Step 2b — ERROR: Cannot recompute scaler — train_index.pt missing. Run splits first.")
+        sys.exit(1)
 
     # Determine which index to use for local training (train split if available)
     local_train_index = str(train_index) if train_index.exists() else str(index_path)
@@ -184,7 +185,7 @@ def main():
         if not global_best.exists() or args.force_fl:
             client_indexes = [
                 str(clients_dir / f"client{i + 1}" / "index.pt")
-                for i in range(args.n_clients - 1)
+                for i in range(args.n_clients)
             ]
             _run(
                 [
@@ -218,6 +219,7 @@ def main():
                     "--model", args.model,
                     "--n_features", str(args.n_features),
                     "--seq_len", str(args.seq_len),
+                    "--scaler_path", str(processed_dir / "scaler.json"),
                     "--out_file", str(eval_fed),
                 ],
                 "Step 6a/7 — Evaluating federated model on test set",
@@ -237,6 +239,7 @@ def main():
                     "--model", args.model,
                     "--n_features", str(args.n_features),
                     "--seq_len", str(args.seq_len),
+                    "--scaler_path", str(processed_dir / "scaler.json"),
                     "--out_file", str(eval_local),
                 ],
                 "Step 6b/7 — Evaluating local model on test set",

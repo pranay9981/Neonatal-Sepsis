@@ -99,9 +99,11 @@ def arrays_to_state_dict_by_order(model: torch.nn.Module, arrays: List[np.ndarra
     sd = model.state_dict()
     keys = list(sd.keys())
     if len(arrays) != len(keys):
-        # We'll still attempt partial mapping by min len
-        logger.warning("arrays count %d != state_dict keys %d. Attempting partial mapping.", len(arrays), len(keys))
-    map_len = min(len(keys), len(arrays))
+        raise RuntimeError(
+            f"Cannot map {len(arrays)} arrays to {len(keys)} state_dict keys — "
+            "model version mismatch between server and clients."
+        )
+    map_len = len(keys)
     new_sd = {}
     for k, arr in zip(keys[:map_len], arrays[:map_len]):
         t = torch.tensor(arr)

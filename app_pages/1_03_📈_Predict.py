@@ -201,7 +201,9 @@ def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN,
 
     data_np = df_proc.to_numpy(dtype=np.float32)
     if scaler is not None:
-        data_np = _apply_scaler(data_np, scaler)
+        # Only scale non-padded rows (actual data rows); leave zero-padded rows as zeros.
+        actual_len = min(rows, seq_len)
+        data_np[-actual_len:] = _apply_scaler(data_np[-actual_len:], scaler)
     return torch.tensor(data_np).unsqueeze(0), messages
 
 

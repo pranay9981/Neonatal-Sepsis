@@ -3,12 +3,8 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
-try:
-    from pydantic import BaseModel, field_validator, model_validator
-    from pydantic_settings import BaseSettings
-except ImportError:
-    from pydantic import BaseModel, validator as field_validator  # type: ignore
-    model_validator = None  # type: ignore
+from pydantic import BaseModel, field_validator, model_validator
+from pydantic_settings import BaseSettings
 
 import yaml
 

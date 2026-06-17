@@ -325,7 +325,24 @@ def train(
     if model_name == "grud":
         x_mean = _load_grud_empirical_mean(index_path, model.n_features)
         if x_mean is not None:
-            model.set_empirical_mean(x_mean)
+            # Scale x_mean to z-score space so the decay target matches the normalised input.
+            _scaler_path_candidates = [
+                os.path.join(os.path.dirname(index_path), "scaler.json"),
+                os.path.join(os.path.dirname(index_path), "..", "scaler.json"),
+            ]
+            _scaler_data = None
+            for _candidate in _scaler_path_candidates:
+                if os.path.exists(_candidate):
+                    with open(_candidate) as _f:
+                        _scaler_data = json.load(_f)
+                    break
+            if _scaler_data is not None:
+                scaler_mean = torch.tensor(_scaler_data["mean"], dtype=torch.float32)
+                scaler_std  = torch.tensor(_scaler_data["std"],  dtype=torch.float32)
+                x_mean_scaled = (x_mean - scaler_mean) / (scaler_std + 1e-8)
+                model.set_empirical_mean(x_mean_scaled)
+            else:
+                model.set_empirical_mean(x_mean)
 
     pos_weight = torch.tensor(
         [(neg / (pos + 1e-6)) if pos > 0 else 1.0],
@@ -455,10 +472,10 @@ def train(
         json.dump({"threshold": threshold, "method": "youden_j"}, fh, indent=2)
 
     if use_temperature_scaling and len(cal_logits) >= 2 and len(np.unique(cal_y)) >= 2:
-        ts = TemperatureScaler()
-        ts.fit(np.array(cal_logits), np.array(cal_y))
-        ts.save(threshold_path)
-        logger.info("Temperature scaling fitted: T=%.4f", ts.temperature)
+        temp_scaler = TemperatureScaler()
+        temp_scaler.fit(np.array(cal_logits), np.array(cal_y))
+        temp_scaler.save(threshold_path)
+        logger.info("Temperature scaling fitted: T=%.4f", temp_scaler.temperature)
 
     logger.info("Calibrated decision threshold: %.4f (saved to %s)", threshold, threshold_path)
     logger.info("Training complete. Best AUROC=%.4f  Best AUPRC=%.4f", best_auc, best_ap)

@@ -190,7 +190,24 @@ class FlowerClient(fl.client.NumPyClient):
         if model_name == "grud":
             x_mean = _load_grud_empirical_mean(index_path, self.n_features)
             if x_mean is not None:
-                self.model.set_empirical_mean(x_mean)
+                # Scale x_mean to z-score space so the decay target matches the normalised input.
+                _scaler_candidates = [
+                    os.path.join(os.path.dirname(index_path), "scaler.json"),
+                    os.path.join(os.path.dirname(index_path), "..", "scaler.json"),
+                ]
+                _scaler_data = None
+                for _candidate in _scaler_candidates:
+                    if os.path.exists(_candidate):
+                        with open(_candidate) as _f:
+                            _scaler_data = json.load(_f)
+                        break
+                if _scaler_data is not None:
+                    scaler_mean = torch.tensor(_scaler_data["mean"], dtype=torch.float32)
+                    scaler_std  = torch.tensor(_scaler_data["std"],  dtype=torch.float32)
+                    x_mean_scaled = (x_mean - scaler_mean) / (scaler_std + 1e-8)
+                    self.model.set_empirical_mean(x_mean_scaled)
+                else:
+                    self.model.set_empirical_mean(x_mean)
 
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="mean")
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr)
@@ -204,6 +221,8 @@ class FlowerClient(fl.client.NumPyClient):
     def _make_loaders(self, ds: PatientDataset):
         """Stratified 80/20 split; fall back to random if not enough samples."""
         n = len(ds)
+        if ds.y_indexed is None:
+            logger.warning("Client dataset has no y_indexed labels — skipping this client's contribution")
         labels = [int(float(ds.y_indexed[i])) if ds.y_indexed else 0 for i in range(n)]
         n_val = max(1, int(0.2 * n))
         n_train = n - n_val
@@ -253,6 +272,7 @@ class FlowerClient(fl.client.NumPyClient):
                 logger.warning("Could not set incoming parameters: %s", e)
 
         # Store global params as fixed tensors for the proximal term.
+        # FedProx: w0 must be captured BEFORE any local gradient step — ordering is critical.
         # Filter to only trainable parameter positions (skip buffers like x_mean)
         # so the zip in proximal_term stays aligned with model.parameters().
         if self.mu > 0 and parameters is not None:
@@ -400,6 +420,7 @@ def start_client(
     max_retries: int = 20,
     retry_delay: float = 2.0,
 ):
+    """Connect to the FL server; retries up to max_retries times on connection failure."""
     client = FlowerClient(
         index_path=index_path,
         model_name=model_name,

@@ -326,6 +326,7 @@ class MetricsPage:
             fig_prc = go.Figure()
             fig_roc.add_shape(type="line", x0=0, y0=0, x1=1, y1=1,
                               line=dict(color="#475569", dash="dash", width=1.5))
+            # rng is intentionally defined outside the loop to maintain reproducible sequence across bootstrap iterations.
             rng = np.random.RandomState(42)
 
             for i, (name, data) in enumerate(available.items()):

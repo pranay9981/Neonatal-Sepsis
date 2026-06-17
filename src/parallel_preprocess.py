@@ -153,6 +153,7 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
 
     y = 0
     y_seq_raw = None  # per-timestep SepsisLabel (before resampling window)
+    y_seq_full = None  # full resampled label sequence (set inside label loop below)
     onset_hour = None
     for cand in LABEL_CANDIDATES:
         for col in df.columns:
@@ -203,7 +204,7 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
         payload['y_seq'] = torch.tensor(y_seq_raw)
     if onset_hour is not None:
         # Adjust for windowing: if full sequence was cropped to seq_len, onset_hour shifts
-        n_rows_full_final = len(y_seq_full) if 'y_seq_full' in dir() else seq_len
+        n_rows_full_final = len(y_seq_full) if y_seq_full is not None else seq_len
         if n_rows_full_final > seq_len:
             onset_hour = max(0, onset_hour - (n_rows_full_final - seq_len))
         payload['onset_hour'] = onset_hour

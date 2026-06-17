@@ -7,6 +7,7 @@ GRU-D is stronger on sparse/missing-heavy patients; Transformer on dense data.
 The default 50/50 blend is a free performance gain over either model alone.
 """
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,8 @@ import torch.nn as nn
 
 from model import TimeSeriesTransformer
 from model_grud import GRUD
+
+_log = logging.getLogger(__name__)
 
 
 class EnsembleModel(nn.Module):
@@ -81,8 +84,6 @@ def load_ensemble(
 
 
 def _load_state(model: nn.Module, ckpt_path: str):
-    import logging
-    _log = logging.getLogger(__name__)
     sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     if isinstance(sd, dict) and "model_state" in sd:
         sd = sd["model_state"]

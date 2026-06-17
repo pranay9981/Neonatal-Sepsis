@@ -25,7 +25,7 @@ class TemperatureScaler:
     def __init__(self):
         self.temperature: float = 1.0
 
-    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 1.0, max_iter: int = 100) -> float:
+    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 0.01, max_iter: int = 100) -> float:
         """
         Optimise temperature to minimise negative log-likelihood on val set.
         Returns the fitted temperature.
@@ -67,5 +67,12 @@ class TemperatureScaler:
         ts = cls()
         with open(path) as f:
             d = json.load(f)
-        ts.temperature = float(d.get("temperature", 1.0))
+        temp = float(d.get("temperature", 1.0))
+        if temp <= 0:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "Loaded temperature %.4f is non-positive; resetting to 1.0", temp
+            )
+            temp = 1.0
+        ts.temperature = temp
         return ts

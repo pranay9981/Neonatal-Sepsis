@@ -124,7 +124,8 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
     """
     _style()
     plt.figure(figsize=(9, 7))
-    
+
+    any_plotted = False
     y_true = np.array([])  # initialize before loop so PRC baseline uses all data
     for file_idx, filepath in enumerate(results_files):
         if not os.path.exists(filepath):
@@ -156,13 +157,14 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
             score = roc_auc_score(y_true, y_prob)
             ci_low, ci_high = ci_data['roc_score_ci']
             score_name = "AUROC"
-            
+
             # Plot the mean curve (stepwise)
             plt.plot(fpr, tpr, drawstyle='steps-post', lw=2.5, color=color,
                      label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f}–{ci_high:.3f}])')
             # Plot the shaded CI band
             base_fpr, tpr_low, tpr_high = ci_data['roc_curve_ci']
             plt.fill_between(base_fpr, tpr_low, tpr_high, alpha=0.15, color=color)
+            any_plotted = True
 
         elif plot_type == 'prc':
             precision, recall, _ = precision_recall_curve(y_true, y_prob)
@@ -174,6 +176,7 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
                      label=f'{model_name}\n({score_name} = {score:.3f} [95% CI: {ci_low:.3f}–{ci_high:.3f}])')
             base_recall, precision_low, precision_high = ci_data['prc_curve_ci']
             plt.fill_between(base_recall, precision_low, precision_high, alpha=0.15, color=color)
+            any_plotted = True
 
     if plot_type == 'roc':
         plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Chance (AUROC = 0.500)')
@@ -183,8 +186,9 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
         plt.legend(loc='lower right', fontsize=10)
     
     elif plot_type == 'prc':
-        baseline = np.sum(y_true) / len(y_true) if len(y_true) > 0 else 0
-        plt.axhline(baseline, ls='--', color='k', lw=2, label=f'Chance (AUPRC = {baseline:.3f})')
+        if any_plotted:
+            baseline = np.sum(y_true) / len(y_true) if len(y_true) > 0 else 0
+            plt.axhline(baseline, ls='--', color='k', lw=2, label=f'Chance (AUPRC = {baseline:.3f})')
         plt.xlabel('Recall', fontsize=12)
         plt.ylabel('Precision', fontsize=12)
         plt.title('Model Comparison - Precision-Recall Curve', fontsize=14)

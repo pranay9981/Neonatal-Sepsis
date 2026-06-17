@@ -86,11 +86,16 @@ def run_fl_sim(
         sys.exit(1)
 
     client_procs = []
-    for i, cmd in enumerate(client_cmds):
-        print(f"[FL-SIM] Starting client {i + 1}/{n_clients} ...")
-        proc = subprocess.Popen(cmd, env=env, cwd=str(PROJECT_ROOT))
-        client_procs.append(proc)
-        time.sleep(1.0)
+    try:
+        for i, cmd in enumerate(client_cmds):
+            print(f"[FL-SIM] Starting client {i + 1}/{n_clients} ...")
+            proc = subprocess.Popen(cmd, env=env, cwd=str(PROJECT_ROOT))
+            client_procs.append(proc)
+            time.sleep(1.0)
+    except Exception as e:
+        print(f"[FL-SIM] ERROR launching client: {e} — terminating server")
+        server_proc.terminate()
+        raise
 
     all_procs = [server_proc] + client_procs
 
