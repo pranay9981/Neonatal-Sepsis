@@ -71,8 +71,11 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
             from fl_server import build_model, arrays_to_state_dict_by_order
             ref_model = build_model(self.model_name, self.n_features, self.seq_len)
             keys = list(ref_model.state_dict().keys())
-        except Exception:
-            # Fall back to standard FedAvg if we can't introspect keys
+        except Exception as e:
+            logger.error(
+                "FedBN: could not introspect model keys (%s) — "
+                "falling back to FedAvg. BatchNorm/LayerNorm params WILL be globally averaged.", e
+            )
             return super().aggregate_fit(server_round, results, failures)
 
         # Compute weighted average for non-BN parameters only
@@ -112,7 +115,7 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
         except Exception as e:
             logger.warning("FedBN: could not save checkpoint: %s", e)
 
-        return aggregated_params, {"round": server_round}
+        return aggregated_params, {}
 
     def aggregate_evaluate(self, server_round: int, results, failures):
         agg, metrics = super().aggregate_evaluate(server_round, results, failures)

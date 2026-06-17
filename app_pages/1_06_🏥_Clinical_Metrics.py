@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 SRC_DIR = Path(__file__).parent.parent / "src"
@@ -254,7 +255,6 @@ class ClinicalMetricsPage:
             return rows
 
         if patient_models:
-            import pandas as pd
             rows = _build_summary_rows(patient_models)
             if rows:
                 st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
@@ -271,7 +271,6 @@ class ClinicalMetricsPage:
             )
             rows = _build_summary_rows(windowed_models)
             if rows:
-                import pandas as pd
                 st.dataframe(pd.DataFrame(rows).set_index("Model"), use_container_width=True)
 
         st.markdown(

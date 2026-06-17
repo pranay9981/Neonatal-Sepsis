@@ -31,7 +31,7 @@ class EnsembleDataset(Dataset):
     """
 
     def __init__(self, index_path: str):
-        d = torch.load(index_path, weights_only=False)
+        d = torch.load(index_path, weights_only=True)
         self.x_paths = d.get("x_paths", [])
         self.y_indexed = d.get("y", None)
         if self.y_indexed is not None and hasattr(self.y_indexed, "tolist"):
@@ -41,7 +41,7 @@ class EnsembleDataset(Dataset):
         return len(self.x_paths)
 
     def __getitem__(self, idx):
-        data = torch.load(self.x_paths[idx], weights_only=False)
+        data = torch.load(self.x_paths[idx], weights_only=True)
         X = data["X"].float()
         T, F = X.shape
         y = float(self.y_indexed[idx]) if self.y_indexed is not None else float(data.get("y", 0))

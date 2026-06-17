@@ -4,6 +4,7 @@ Launcher for the multi-page Streamlit dashboard — Neonatal Sepsis Detection.
 Dynamically loads page modules from app_pages/ and calls their render() method.
 """
 
+import logging as _logging
 import streamlit as st
 from pathlib import Path
 import importlib.util
@@ -174,11 +175,12 @@ with st.sidebar:
     if st.button("Clear cache & reload", key="clear_cache_btn", use_container_width=True):
         st.cache_data.clear()
         st.cache_resource.clear()
+        st.session_state.pop("page_modules", None)
         st.rerun()
 
     st.markdown(
         '<div style="margin-top:16px; font-size:0.7rem; color:#334155;">'
-        'v2 &middot; improvements/v2</div>',
+        'v3 &middot; improvements/v3</div>',
         unsafe_allow_html=True,
     )
 
@@ -200,7 +202,6 @@ if not module_path.exists():
     st.error(f"Page file not found: {module_path}")
     st.stop()
 
-import logging as _logging
 _page_logger = _logging.getLogger("app.pages")
 
 if "page_modules" not in st.session_state:

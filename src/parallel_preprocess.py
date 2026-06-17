@@ -209,7 +209,7 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
             onset_hour = max(0, onset_hour - (n_rows_full_final - seq_len))
         payload['onset_hour'] = onset_hour
     torch.save(payload, out_path)
-    return (fp, True, out_path)
+    return (fp, True, out_path, int(y))
 
 
 def recompute_scaler_from_index(train_index_path: str, out_folder: str):
@@ -241,8 +241,7 @@ def _compute_and_save_scaler(x_paths, out_folder):
     if not all_arrays:
         logger.warning("No patient tensors could be loaded; skipping scaler computation.")
         return
-    stacked = np.stack(all_arrays, axis=0)          # (N, T, F)
-    flat = stacked.reshape(-1, stacked.shape[-1])    # (N*T, F)
+    flat = np.concatenate(all_arrays, axis=0)        # (sum_actual_lens, F)
     feature_mean = flat.mean(axis=0).tolist()
     feature_std = np.maximum(flat.std(axis=0), 1e-6).tolist()
     scaler = {
@@ -275,11 +274,11 @@ def main(raw_folder, out_folder, seq_len=48, nprocs=None):
     x_paths = []
     ys = []
     failures = []
-    for (fp, ok, info) in results:
+    for result in results:
+        fp, ok, info = result[0], result[1], result[2]
         if ok:
             x_paths.append(info)
-            d = torch.load(info, weights_only=False)
-            ys.append(float(d.get('y', 0)))
+            ys.append(float(result[3]) if len(result) > 3 else 0.0)
         else:
             failures.append((fp, info))
     idx_path = os.path.join(out_folder, "index_with_labels.pt")

@@ -18,14 +18,13 @@ class DataConfig(BaseModel):
     train_ratio: float = 0.70
     val_ratio: float = 0.15
 
-    if model_validator is not None:
-        @model_validator(mode="after")
-        def _check_ratios(self) -> "DataConfig":
-            if self.train_ratio + self.val_ratio > 1.0:
-                raise ValueError(
-                    f"train_ratio + val_ratio must be <= 1.0, got {self.train_ratio + self.val_ratio:.3f}"
-                )
-            return self
+    @model_validator(mode="after")
+    def _check_ratios(self) -> "DataConfig":
+        if self.train_ratio + self.val_ratio > 1.0:
+            raise ValueError(
+                f"train_ratio + val_ratio must be <= 1.0, got {self.train_ratio + self.val_ratio:.3f}"
+            )
+        return self
 
 
 class ModelConfig(BaseModel):

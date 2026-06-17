@@ -66,22 +66,29 @@ class PatientDataset(Dataset):
         return len(self.x_paths)
 
     def _load_pt(self, path):
-        return torch.load(path, weights_only=False)
+        return torch.load(path, weights_only=True)
 
     def _load_lmdb(self, lmdb_spec):
         assert lmdb_spec.startswith("lmdb://")
         s = lmdb_spec[len("lmdb://"):]
         path, key = s.split("#", 1)
         env = lmdb.open(path, readonly=True, lock=False)
-        with env.begin() as txn:
-            raw = txn.get(key.encode("utf-8"))
-            obj = pickle.loads(raw)
-        env.close()
+        try:
+            with env.begin() as txn:
+                raw = txn.get(key.encode("utf-8"))
+                obj = pickle.loads(raw)
+        finally:
+            env.close()
         return obj
 
     def _apply_scaler(self, X: torch.Tensor) -> torch.Tensor:
         if self._mean is None:
             return X
+        if self._mean.shape[0] != X.shape[-1]:
+            raise ValueError(
+                f"Scaler has {self._mean.shape[0]} features but tensor has {X.shape[-1]} — "
+                "check that scaler.json matches the preprocessed data."
+            )
         return (X - self._mean.to(X.device)) / self._std.to(X.device)
 
     def _augment(self, X: torch.Tensor) -> torch.Tensor:

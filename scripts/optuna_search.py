@@ -63,13 +63,13 @@ def _build_model(trial, model_name: str, n_features: int, seq_len: int):
         return GRUD(n_features=n_features, hidden_size=hidden_size, dropout=dropout)
 
 
-def objective(trial, index_path: str, model_name: str, epochs: int, device: str):
+def objective(trial, index_path: str, model_name: str, epochs: int, device: str, scaler_path: str | None = None):
     lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
 
     seed_everything(42 + trial.number)
     mode = "grud" if model_name == "grud" else "transformer"
-    ds = PatientDataset(index_path, mode=mode)
+    ds = PatientDataset(index_path, mode=mode, scaler_path=scaler_path)
     train_ds, val_ds, all_labels = stratified_train_val_split(ds, val_ratio=0.2)
 
     collate = collate_grud if model_name == "grud" else None
@@ -139,6 +139,7 @@ def run_optuna(
     device: str = "cpu",
     out_file: str | None = None,
     study_name: str = "sepsis_hpo",
+    scaler_path: str | None = None,
 ):
     if not _OPTUNA_OK:
         print("optuna not installed. Run: pip install optuna"); return
@@ -150,7 +151,7 @@ def run_optuna(
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=3),
     )
     study.optimize(
-        lambda t: objective(t, index_path, model_name, epochs, device),
+        lambda t: objective(t, index_path, model_name, epochs, device, scaler_path),
         n_trials=n_trials,
     )
 
@@ -176,6 +177,7 @@ if __name__ == "__main__":
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--out_file", default=str(PROJECT_ROOT / "optuna_results.json"))
     ap.add_argument("--study_name", default="sepsis_hpo")
+    ap.add_argument("--scaler_path", default=None, help="Path to scaler.json for feature normalisation")
     args = ap.parse_args()
     run_optuna(args.index, args.model, args.n_trials, args.epochs,
-               args.device, args.out_file, args.study_name)
+               args.device, args.out_file, args.study_name, args.scaler_path)

@@ -126,7 +126,7 @@ def plot_curves(results_files, out_file_base, plot_type='roc'):
     plt.figure(figsize=(9, 7))
 
     any_plotted = False
-    y_true = np.array([])  # initialize before loop so PRC baseline uses all data
+    y_true = np.array([])  # holds last successfully loaded model's ground truth; used for PRC baseline
     for file_idx, filepath in enumerate(results_files):
         if not os.path.exists(filepath):
             print(f"[WARN] File not found, skipping: {filepath}")

@@ -222,8 +222,9 @@ class FlowerClient(fl.client.NumPyClient):
         """Stratified 80/20 split; fall back to random if not enough samples."""
         n = len(ds)
         if ds.y_indexed is None:
-            logger.warning("Client dataset has no y_indexed labels — skipping this client's contribution")
-        labels = [int(float(ds.y_indexed[i])) if ds.y_indexed else 0 for i in range(n)]
+            logger.warning("Client dataset has no y_indexed labels — cannot participate in FL.")
+            raise ValueError("Client index has no labels; this client cannot train.")
+        labels = [int(float(ds.y_indexed[i])) for i in range(n)]
         n_val = max(1, int(0.2 * n))
         n_train = n - n_val
 

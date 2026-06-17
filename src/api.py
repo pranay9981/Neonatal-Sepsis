@@ -50,13 +50,15 @@ except ImportError:
 _model = None
 _scaler = None
 _temperature: float = 1.0
+_decision_threshold: float = 0.5
 _model_version: str = "unknown"
 _load_time: float = 0.0
 _start_time: float = time.time()
 
 MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")  # "transformer" or "grud"
 MC_SAMPLES = int(os.environ.get("SEPSIS_MC_SAMPLES", "0"))
-AUDIT_LOG = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
+_raw_audit_log = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
+AUDIT_LOG = str(Path(_raw_audit_log).resolve())
 MAX_ROWS = 1000
 
 if _PROMETHEUS:
@@ -76,7 +78,7 @@ def _pad_or_trim(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
 
 
 def _load_artifacts():
-    global _model, _scaler, _temperature, _model_version, _load_time
+    global _model, _scaler, _temperature, _decision_threshold, _model_version, _load_time
     p = Path(MODEL_PATH)
     if not p.exists():
         raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
@@ -126,6 +128,7 @@ def _load_artifacts():
         _temperature = float(thresh_data.get("temperature", 1.0))
         if _temperature <= 0:
             _temperature = 1.0
+        _decision_threshold = float(thresh_data.get("threshold", 0.5))
 
 
 def _append_audit(entry: dict):
@@ -220,7 +223,13 @@ def predict(req: PredictRequest):
     if _scaler is not None:
         mean = np.array(_scaler["mean"], dtype=np.float32)
         std = np.array(_scaler["std"], dtype=np.float32)
-        arr = (arr - mean) / (std + 1e-8)
+        if len(mean) != N_FEATURES or len(std) != N_FEATURES:
+            _logger.error(
+                "Scaler has %d features but N_FEATURES=%d — skipping normalisation.",
+                len(mean), N_FEATURES,
+            )
+        else:
+            arr = (arr - mean) / (std + 1e-8)
 
     tensor = torch.tensor(arr).unsqueeze(0)  # (1, T, F)
 
@@ -242,7 +251,7 @@ def predict(req: PredictRequest):
             if MC_SAMPLES > 1:
                 _model.train()  # enable dropout
                 try:
-                    mc_probs = [float(torch.sigmoid(_forward()).squeeze()) for _ in range(MC_SAMPLES)]
+                    mc_probs = [float(torch.sigmoid(_forward().squeeze() / _temperature)) for _ in range(MC_SAMPLES)]
                 finally:
                     _model.eval()
                 prob = float(np.mean(mc_probs))
@@ -253,8 +262,8 @@ def predict(req: PredictRequest):
                 logit = logit / _temperature
                 prob = float(torch.sigmoid(logit).item())
 
-    risk = "HIGH" if prob >= 0.5 else ("MODERATE" if prob >= 0.25 else "LOW")
-    alert = prob >= 0.5
+    risk = "HIGH" if prob >= _decision_threshold else ("MODERATE" if prob >= 0.25 else "LOW")
+    alert = prob >= _decision_threshold
     latency_ms = (time.time() - t0) * 1000
 
     if _PROMETHEUS:

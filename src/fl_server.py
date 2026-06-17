@@ -31,6 +31,7 @@ import argparse
 import os
 import math
 import json
+import shutil
 from typing import List, Any, Dict
 
 import numpy as np
@@ -253,7 +254,6 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
                 try:
                     if os.path.exists(src):
                         # copy file
-                        import shutil
                         shutil.copyfile(src, dst)
                         self.best_metric_value = val
                         self.best_round = server_round
