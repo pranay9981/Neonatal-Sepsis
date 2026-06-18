@@ -1,5 +1,5 @@
 # Install CPU version separately: pip install torch --index-url https://download.pytorch.org/whl/cpu
-torch>=2.0.0,<2.3.0
+torch>=2.5.0,<3.0.0
 flwr==1.23.0
 pandas>=2.2.0,<2.4.0
 numpy>=2.2.0,<2.5.0
