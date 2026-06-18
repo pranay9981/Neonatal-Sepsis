@@ -16,6 +16,12 @@ services:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
       - SEPSIS_MODEL_TYPE=grud
       - SEPSIS_SCALER_PATH=/app/data/processed/patients/scaler.json
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   api:
     build: .

@@ -41,3 +41,9 @@ PLOT_PRC_PATH = os.environ.get(
 # --- Model architecture constants ---
 N_FEATURES: int = int(os.environ.get("SEPSIS_N_FEATURES", "40"))
 SEQ_LEN: int = int(os.environ.get("SEPSIS_SEQ_LEN", "48"))
+
+# W-27: validate that architecture constants are positive
+if N_FEATURES <= 0:
+    raise ValueError(f"N_FEATURES must be positive, got {N_FEATURES}")
+if SEQ_LEN <= 0:
+    raise ValueError(f"SEQ_LEN must be positive, got {SEQ_LEN}")

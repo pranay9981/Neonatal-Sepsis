@@ -50,6 +50,41 @@ def _write_synthetic_index(
     return str(idx_path)
 
 
+def _write_imbalanced_index(
+    folder: Path,
+    n: int = 100,
+    positive_rate: float = 0.05,
+    seq_len: int = 48,
+    n_features: int = 40,
+) -> str:
+    """
+    Write n synthetic patient .pt files with a ~5% positive rate to simulate real
+    clinical class imbalance. Used by test_training_with_imbalanced_data.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    paths, labels = [], []
+    n_pos = max(1, int(n * positive_rate))
+    for i in range(n):
+        X = torch.randn(seq_len, n_features)
+        y = 1 if i < n_pos else 0
+        mask = torch.ones(seq_len, n_features)
+        deltas = torch.zeros(seq_len, n_features)
+        p = folder / f"p{i:03d}.pt"
+        torch.save({
+            "X": X,
+            "y": y,
+            "mask": mask,
+            "deltas": deltas,
+            "actual_len": seq_len,
+            "meta": {},
+        }, p)
+        paths.append(str(p))
+        labels.append(y)
+    idx_path = folder / "index.pt"
+    torch.save({"x_paths": paths, "y": labels}, idx_path)
+    return str(idx_path)
+
+
 class TestEarlyStopping:
     def test_no_stop_improving(self):
         es = EarlyStopping(patience=3)
@@ -218,3 +253,22 @@ class TestTrainFunction:
             data = json.load(f)
         assert "threshold" in data
         assert 0.0 <= data["threshold"] <= 1.0
+
+    def test_training_with_imbalanced_data(self, tmp_path):
+        """Training on a ~5% positive rate dataset (realistic clinical imbalance) should complete
+        without error and produce a checkpoint. This exercises loss weighting and edge cases
+        that balanced fixtures miss."""
+        idx = _write_imbalanced_index(tmp_path / "data", n=100, positive_rate=0.05)
+        train(
+            index_path=idx,
+            model_name="transformer",
+            epochs=2,
+            batch_size=16,
+            lr=1e-3,
+            seed=42,
+            run_name="test_imbalanced",
+            checkpoint_root=str(tmp_path / "runs"),
+            patience=10,
+        )
+        checkpoints = list((tmp_path / "runs").glob("*/checkpoints/model_best.pt"))
+        assert len(checkpoints) == 1, "Expected one model_best.pt checkpoint even with imbalanced data"

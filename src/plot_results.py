@@ -80,12 +80,10 @@ def get_bootstrapped_ci(y_true, y_prob, n_bootstraps=1000):
 
     # --- Curve CI Bands ---
     tpr_bootstraps = np.array(tpr_bootstraps)
-    tpr_mean = np.mean(tpr_bootstraps, axis=0)
     tpr_low = np.percentile(tpr_bootstraps, 2.5, axis=0)
     tpr_high = np.percentile(tpr_bootstraps, 97.5, axis=0)
 
     precision_bootstraps = np.array(precision_bootstraps)
-    precision_mean = np.mean(precision_bootstraps, axis=0)
     precision_low = np.percentile(precision_bootstraps, 2.5, axis=0)
     precision_high = np.percentile(precision_bootstraps, 97.5, axis=0)
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 import yaml
@@ -35,6 +35,16 @@ class ModelConfig(BaseModel):
     dim_feedforward: int = 256
     dropout: float = 0.1
     hidden_size: int = 128
+
+    # I-10: ensure transformer head count divides d_model evenly
+    @model_validator(mode="after")
+    def _check_head_divisibility(self) -> "ModelConfig":
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(
+                f"d_model must be divisible by n_heads, "
+                f"got d_model={self.d_model}, n_heads={self.n_heads}"
+            )
+        return self
 
 
 class TrainingConfig(BaseModel):
@@ -80,6 +90,9 @@ class OptunaConfig(BaseModel):
 
 
 class ProjectConfig(BaseModel):
+    # I-09: reject unknown YAML keys so misconfigured runs fail loudly
+    model_config = ConfigDict(extra="forbid")
+
     data: DataConfig = DataConfig()
     model: ModelConfig = ModelConfig()
     training: TrainingConfig = TrainingConfig()

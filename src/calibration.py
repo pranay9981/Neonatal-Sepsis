@@ -25,7 +25,7 @@ class TemperatureScaler:
     def __init__(self):
         self.temperature: float = 1.0
 
-    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 0.01, max_iter: int = 100) -> float:
+    def fit(self, logits: np.ndarray, labels: np.ndarray, lr: float = 1.0, max_iter: int = 100) -> float:
         """
         Optimise temperature to minimise negative log-likelihood on val set.
         Returns the fitted temperature.

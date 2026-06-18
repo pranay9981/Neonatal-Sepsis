@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -29,7 +30,9 @@ _mc_lock = threading.Lock()
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 SRC_DIR = Path(__file__).parent
@@ -57,9 +60,15 @@ _start_time: float = time.time()
 
 MODEL_TYPE = os.environ.get("SEPSIS_MODEL_TYPE", "grud")  # "transformer" or "grud"
 MC_SAMPLES = int(os.environ.get("SEPSIS_MC_SAMPLES", "0"))
+METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
 _raw_audit_log = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
-AUDIT_LOG = str(Path(_raw_audit_log).resolve())
+_audit_path = Path(_raw_audit_log).resolve()
+_allowed_base = Path(".").resolve()
+if not str(_audit_path).startswith(str(_allowed_base)):
+    raise ValueError(f"AUDIT_LOG path traversal blocked: {_audit_path}")
+AUDIT_LOG = str(_audit_path)
 MAX_ROWS = 1000
+_audit_lock = threading.Lock()
 
 if _PROMETHEUS:
     _pred_counter = Counter("sepsis_predictions_total", "Total predictions served")
@@ -95,7 +104,15 @@ def _load_artifacts():
                 f"Model checksum mismatch! Expected {expected_sha}, got {actual}"
             )
 
-    raw = torch.load(str(p), map_location="cpu", weights_only=False)
+    try:
+        raw = torch.load(str(p), map_location="cpu", weights_only=True)
+    except Exception:
+        _logger.warning(
+            "torch.load with weights_only=True failed for %s; falling back to "
+            "weights_only=False — ensure checkpoint source is trusted.",
+            p,
+        )
+        raw = torch.load(str(p), map_location="cpu", weights_only=False)
     if isinstance(raw, dict) and "model_state" in raw:
         raw = raw["model_state"]
     if MODEL_TYPE == "grud":
@@ -133,8 +150,9 @@ def _load_artifacts():
 
 def _append_audit(entry: dict):
     try:
-        with open(AUDIT_LOG, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+        with _audit_lock:
+            with open(AUDIT_LOG, "a") as f:
+                f.write(json.dumps(entry) + "\n")
     except Exception as e:
         _logger.error("Audit log write failed — prediction not recorded: %s", e)
 
@@ -154,6 +172,29 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# W-21: CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+# W-25: global exception handler — suppress stack traces in 500 responses
+@app.exception_handler(Exception)
+async def global_exc_handler(request, exc):
+    _logger.error("Unhandled exception", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# W-22: startup check — fail fast if model file is absent
+@app.on_event("startup")
+async def check_model_exists():
+    model_path = os.getenv("SEPSIS_MODEL_PATH", "server_out/global_best.pt")
+    if not Path(model_path).exists():
+        raise RuntimeError(f"Model not found at startup: {model_path}")
 
 
 class PredictRequest(BaseModel):
@@ -190,16 +231,18 @@ class PredictResponse(BaseModel):
 
 @app.get("/health")
 def health():
+    # W-20: omit model_version and uptime_seconds — info leak to unauthenticated callers
     return {
-        "status": "ok",
+        "status": "healthy",
         "model_loaded": _model is not None,
-        "model_version": _model_version,
-        "uptime_seconds": round(time.time() - _start_time, 1),
     }
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(authorization: str = Header(default="")):
+    # W-28: require bearer token when METRICS_TOKEN env var is set
+    if METRICS_TOKEN and authorization != f"Bearer {METRICS_TOKEN}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
     if not _PROMETHEUS:
         raise HTTPException(status_code=501, detail="prometheus_client not installed")
     return FastAPIResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -209,6 +252,23 @@ def metrics():
 def predict(req: PredictRequest):
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+
+    # C-15: patient_id length limit; hash "ANONYMOUS" when absent
+    if req.patient_id and len(req.patient_id) > 64:
+        raise HTTPException(status_code=422, detail="patient_id too long")
+    pid_hash = hashlib.sha256((req.patient_id or "ANONYMOUS").encode()).hexdigest()[:16]
+
+    # C-14: validate mask and deltas shapes/values before processing
+    if req.mask is not None:
+        mask_check = np.array(req.mask)
+        if mask_check.shape != (len(req.data), N_FEATURES):
+            raise HTTPException(status_code=422, detail="mask shape mismatch")
+        if not np.all(np.isin(mask_check, [0, 1])):
+            raise HTTPException(status_code=422, detail="mask must be binary")
+    if req.deltas is not None:
+        delta_check = np.array(req.deltas)
+        if np.any(delta_check < 0):
+            raise HTTPException(status_code=422, detail="deltas must be non-negative")
 
     t0 = time.time()
     arr = np.array(req.data, dtype=np.float32)
@@ -233,6 +293,10 @@ def predict(req: PredictRequest):
 
     tensor = torch.tensor(arr).unsqueeze(0)  # (1, T, F)
 
+    # C-16: reject NaN / Inf tensors before forwarding to model
+    if not torch.isfinite(tensor).all():
+        raise HTTPException(status_code=422, detail="Input features contain NaN or Inf values")
+
     # Build extra tensors for GRU-D
     if MODEL_TYPE == "grud":
         mask_arr = np.ones_like(arr) if req.mask is None else _pad_or_trim(np.array(req.mask, dtype=np.float32), arr.shape)
@@ -246,19 +310,25 @@ def predict(req: PredictRequest):
         return _model(tensor)
 
     prob_low = prob_high = None
-    with torch.no_grad():
-        with _mc_lock:
+    # C-13: acquire lock first, then apply torch.no_grad() inside the lock
+    with _mc_lock:
+        with torch.no_grad():
             if MC_SAMPLES > 1:
                 _model.train()  # enable dropout
                 try:
-                    mc_probs = [float(torch.sigmoid(_forward().squeeze() / _temperature)) for _ in range(MC_SAMPLES)]
+                    # W-26: squeeze(0) avoids RuntimeError on multi-element tensors
+                    mc_probs = [
+                        float(torch.sigmoid(_forward().squeeze(0).view(-1)[0] / _temperature))
+                        for _ in range(MC_SAMPLES)
+                    ]
                 finally:
                     _model.eval()
                 prob = float(np.mean(mc_probs))
                 prob_low = float(np.percentile(mc_probs, 2.5))
                 prob_high = float(np.percentile(mc_probs, 97.5))
             else:
-                logit = _forward().squeeze()
+                # W-26: squeeze(0) then index to guarantee scalar
+                logit = _forward().squeeze(0).view(-1)[0]
                 logit = logit / _temperature
                 prob = float(torch.sigmoid(logit).item())
 
@@ -279,14 +349,15 @@ def predict(req: PredictRequest):
         return "49h+"
 
     _append_audit({
-        "patient_id": hashlib.sha256(str(req.patient_id).encode()).hexdigest() if req.patient_id else None,
+        "patient_id": pid_hash,
         "probability": prob,
         "risk_level": risk,
         "alert": alert,
         "model_version": _model_version,
         "n_timesteps": _bucket_timesteps(n_rows),
         "latency_ms": round(latency_ms, 2),
-        "timestamp": time.time(),
+        # I-11: ISO 8601 UTC timestamp instead of POSIX float
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
     return PredictResponse(

@@ -29,19 +29,22 @@ class PatientDataset(Dataset):
     - LMDB shards: index entries pointing to lmdb://<path>#<key>
     - mode='transformer': yields (X, pad_mask, y)
         pad_mask: (T,) bool tensor — True at front-padded (invalid) positions.
-    - mode='grud': yields (X_filled, mask, deltas, y)
+    - mode='grud': yields (X_filled, mask, deltas, actual_len, y)
         Uses pre-computed mask/deltas stored by parallel_preprocess.py when available;
         falls back to NaN-detection for older .pt files.
 
     scaler_path: optional path to scaler.json (mean/std per feature).
         When provided, X is normalised as (X - mean) / std in __getitem__.
-        Padded/missing positions are normalised too — handled correctly because
-        the transformer pad_mask ignores them and GRU-D's missingness mask
-        overwrites them during imputation.
+        Padded positions beyond actual_len are zeroed out after normalisation
+        so the scaler shift does not corrupt padding zeros.
 
     augment: if True, apply on-the-fly time-series augmentation (jitter + window slicing).
         Should only be enabled during training, not evaluation.
     """
+
+    # Per-process LMDB environment cache. Keyed by (pid, lmdb_path) to avoid
+    # pickling issues with DataLoader workers (each worker has its own pid).
+    _lmdb_envs: dict = {}
 
     def __init__(self, index_path, mode="transformer", scaler_path=None, augment=False):
         d = torch.load(index_path, weights_only=False)
@@ -68,18 +71,31 @@ class PatientDataset(Dataset):
     def _load_pt(self, path):
         return torch.load(path, weights_only=True)
 
+    def _get_lmdb_env(self, lmdb_path: str):
+        """Return a cached lmdb.Environment for lmdb_path, one per process.
+
+        A new environment is opened when the process id changes (e.g. DataLoader
+        worker fork) so we never share file descriptors across processes.
+        """
+        import os as _os
+        pid = _os.getpid()
+        key = (pid, lmdb_path)
+        if key not in self.__class__._lmdb_envs:
+            self.__class__._lmdb_envs[key] = lmdb.open(
+                lmdb_path, readonly=True, lock=False, readahead=False
+            )
+        return self.__class__._lmdb_envs[key]
+
     def _load_lmdb(self, lmdb_spec):
         assert lmdb_spec.startswith("lmdb://")
         s = lmdb_spec[len("lmdb://"):]
         path, key = s.split("#", 1)
-        env = lmdb.open(path, readonly=True, lock=False)
-        try:
-            with env.begin() as txn:
-                raw = txn.get(key.encode("utf-8"))
-                obj = pickle.loads(raw)
-        finally:
-            env.close()
-        return obj
+        env = self._get_lmdb_env(path)
+        with env.begin() as txn:
+            raw = txn.get(key.encode("utf-8"))
+        if raw is None:
+            raise KeyError(f"Key {key!r} not found in LMDB at {path}")
+        return pickle.loads(raw)
 
     def _apply_scaler(self, X: torch.Tensor) -> torch.Tensor:
         if self._mean is None:
@@ -125,6 +141,7 @@ class PatientDataset(Dataset):
             return X, pad_mask, torch.tensor(y, dtype=torch.float32)
 
         elif self.mode == "grud":
+            actual_len = int(data.get("actual_len", T))
             if "mask" in data and "deltas" in data:
                 mask = data["mask"].float()
                 deltas = data["deltas"].float()
@@ -136,10 +153,15 @@ class PatientDataset(Dataset):
                 X_filled[torch.isnan(X_filled)] = 0.0
                 deltas = _compute_deltas_fallback(mask)
 
-            # Scaler is applied before augmentation to ensure augmented features remain in z-score space.
+            # Scaler applied before augmentation; padded positions zeroed AFTER
+            # normalisation so the scaler mean-shift does not corrupt padding zeros.
             X_filled = self._apply_scaler(X_filled)
+            if actual_len < T:
+                X_filled[: T - actual_len] = 0.0
+                mask[: T - actual_len] = 0.0
+                deltas[: T - actual_len] = 0.0
             X_filled = self._augment(X_filled)
-            return X_filled, mask, deltas, torch.tensor(y, dtype=torch.float32)
+            return X_filled, mask, deltas, actual_len, torch.tensor(y, dtype=torch.float32)
 
         else:
             raise ValueError("Unknown dataset mode: " + self.mode)

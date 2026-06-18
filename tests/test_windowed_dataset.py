@@ -4,6 +4,7 @@ Tests for scripts/create_windowed_dataset.py and parallel_preprocess onset_hour/
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pytest
@@ -18,7 +19,7 @@ from create_windowed_dataset import create_windowed_dataset
 from dataset import PatientDataset
 
 
-def _make_patient_pt(folder: Path, patient_id: str, T: int = 60, n_features: int = 40, onset: int | None = None):
+def _make_patient_pt(folder: Path, patient_id: str, T: int = 60, n_features: int = 40, onset: Optional[int] = None):
     """Create a full-length patient .pt with optional onset_hour."""
     X = torch.randn(T, n_features)
     mask = torch.ones(T, n_features)
@@ -60,9 +61,9 @@ class TestCreateWindowedDataset:
         idx = _make_index(tmp_path, [p1], [0])
         out = tmp_path / "windows"
         create_windowed_dataset(str(idx), str(out), seq_len=48, stride=1, horizon=6)
-        d = torch.load(out / "index_with_labels.pt", weights_only=False)
+        d = torch.load(out / "index_with_labels.pt", weights_only=True)
         for pt_path in d["x_paths"]:
-            w = torch.load(pt_path, weights_only=False)
+            w = torch.load(pt_path, weights_only=True)
             assert w["X"].shape[0] == 48
             assert w["X"].shape[1] == 40
 
@@ -73,7 +74,7 @@ class TestCreateWindowedDataset:
         idx = _make_index(tmp_path, [p1], [1])
         out = tmp_path / "windows"
         create_windowed_dataset(str(idx), str(out), seq_len=48, stride=1, horizon=6)
-        d = torch.load(out / "index_with_labels.pt", weights_only=False)
+        d = torch.load(out / "index_with_labels.pt", weights_only=True)
         labels = d["y"]
         # At least one window should have label=1 (early warning)
         assert 1 in labels, "Expected at least one early-warning positive window"
@@ -83,7 +84,7 @@ class TestCreateWindowedDataset:
         idx = _make_index(tmp_path, [p1], [0])
         out = tmp_path / "windows"
         create_windowed_dataset(str(idx), str(out), seq_len=48, stride=1, horizon=6)
-        d = torch.load(out / "index_with_labels.pt", weights_only=False)
+        d = torch.load(out / "index_with_labels.pt", weights_only=True)
         assert all(l == 0 for l in d["y"]), "Non-sepsis patient should produce all-zero windows"
 
     def test_stride_controls_window_count(self, tmp_path):
@@ -92,11 +93,11 @@ class TestCreateWindowedDataset:
 
         out1 = tmp_path / "w_stride1"
         create_windowed_dataset(str(idx), str(out1), seq_len=48, stride=1, horizon=6)
-        d1 = torch.load(out1 / "index_with_labels.pt", weights_only=False)
+        d1 = torch.load(out1 / "index_with_labels.pt", weights_only=True)
 
         out4 = tmp_path / "w_stride4"
         create_windowed_dataset(str(idx), str(out4), seq_len=48, stride=4, horizon=6)
-        d4 = torch.load(out4 / "index_with_labels.pt", weights_only=False)
+        d4 = torch.load(out4 / "index_with_labels.pt", weights_only=True)
 
         assert len(d1["x_paths"]) > len(d4["x_paths"]), "Larger stride should produce fewer windows"
 
@@ -112,7 +113,7 @@ class TestCreateWindowedDataset:
         assert X.shape == (48, 40)
 
         ds_g = PatientDataset(win_idx, mode="grud")
-        X, mask, deltas, y = ds_g[0]
+        X, mask, deltas, actual_len, y = ds_g[0]
         assert X.shape == (48, 40)
 
 
@@ -135,10 +136,11 @@ class TestPreprocessYSeq:
         csv_path = tmp_path / "test_patient.csv"
         df.to_csv(csv_path, index=False)
 
-        _, ok, out_path = process_file(str(csv_path), str(tmp_path), seq_len=48)
+        result = process_file(str(csv_path), str(tmp_path), seq_len=48)
+        ok, out_path = result[1], result[2]
         assert ok, "process_file should succeed"
 
-        d = torch.load(out_path, weights_only=False)
+        d = torch.load(out_path, weights_only=True)
         assert "y" in d
         assert d["y"] == 1, "Patient should be labeled positive"
         assert "y_seq" in d, "y_seq key missing from saved window"

@@ -48,19 +48,27 @@ _DARK_LAYOUT = dict(
 
 
 @st.cache_data
-def load_eval(path: Path):
-    if not path.exists():
+def load_eval(path: str):
+    """Load evaluation JSON; cache key is the resolved absolute path (I-17)."""
+    resolved = str(Path(path).resolve())
+    p = Path(resolved)
+    if not p.exists():
         return None
     try:
-        with open(path) as f:
+        with open(p) as f:
             return json.load(f)
     except Exception:
         return None
 
 
 def compute_metrics(data, threshold=0.5):
-    y_true = np.array(data["y_true"])
-    y_prob = np.array(data["y_prob"])
+    y_true = data.get('y_true')
+    y_prob = data.get('y_prob')
+    if y_true is None or y_prob is None:
+        st.error("Evaluation file is missing 'y_true' or 'y_prob' keys.")
+        return {}
+    y_true = np.array(y_true)
+    y_prob = np.array(y_prob)
     y_pred = (y_prob > threshold).astype(int)
     stored_auroc = data.get("auroc", np.nan)
     stored_auprc = data.get("auprc", np.nan)
@@ -102,9 +110,12 @@ def _bar(df, metric, model_colors):
             textposition="outside",
             textfont=dict(color="#94A3B8"),
         ))
+    metric_values = [v for v in df[metric] if not (isinstance(v, float) and np.isnan(v))]
+    upper = max(metric_values) * 1.18 if metric_values else 1.0
+    upper = max(upper, 0.01)
     fig.update_layout(
         title=dict(text=metric, font=dict(size=15, color="#94A3B8")),
-        yaxis=dict(range=[0, min(1.15, df[metric].max() * 1.18)],
+        yaxis=dict(range=[0, min(1.15, upper)],
                    gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45"),
         xaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"), linecolor="#1E2A45"),
         showlegend=False,
@@ -160,7 +171,7 @@ class MetricsPage:
         available = {}
         model_colors = {}
         for fname, display_name, color in KNOWN_EVAL_FILES:
-            data = load_eval(ROOT / fname)
+            data = load_eval(str(ROOT / fname))
             if data is not None:
                 available[display_name] = data
                 model_colors[display_name] = color
@@ -245,20 +256,20 @@ class MetricsPage:
             df_windowed = df_display[windowed_mask]
             if not df_patient.empty:
                 st.caption("Patient-level models (full ICU stay → sepsis risk)")
-                st.dataframe(df_patient.style.format("{:.3f}").background_gradient(
+                st.dataframe(df_patient.style.format("{:.3f}", na_rep="-").background_gradient(
                     cmap="Blues", axis=0
                 ), use_container_width=True)
             if not df_windowed.empty:
                 st.caption("Early warning model (12h window → sepsis in next 6h) — different task, not directly comparable")
-                st.dataframe(df_windowed.style.format("{:.3f}"), use_container_width=True)
+                st.dataframe(df_windowed.style.format("{:.3f}", na_rep="-"), use_container_width=True)
 
             # Best metric callouts (patient-level only)
             st.markdown("#### Highlights (patient-level models)")
             h1, h2, h3 = st.columns(3)
             _hl = df_patient if not df_patient.empty else df_display
-            best_auroc = _hl["AUROC"].idxmax()
-            best_f1    = _hl["F1-Score"].idxmax()
-            best_rec   = _hl["Recall"].idxmax()
+            best_auroc = _hl["AUROC"].idxmax() if not _hl["AUROC"].isna().all() else "N/A"
+            best_f1    = _hl["F1-Score"].idxmax() if not _hl["F1-Score"].isna().all() else "N/A"
+            best_rec   = _hl["Recall"].idxmax() if not _hl["Recall"].isna().all() else "N/A"
             h1.metric("Best AUROC",   f"{_hl['AUROC'].max():.3f}",   best_auroc)
             h2.metric("Best F1",      f"{_hl['F1-Score'].max():.3f}", best_f1)
             h3.metric("Best Recall",  f"{_hl['Recall'].max():.3f}",   best_rec)

@@ -54,8 +54,14 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 # Collate for GRU-D (must be picklable for Windows multiprocessing)
 # -------------------------
 def collate_grud(batch):
-    Xs, masks, deltas, ys = zip(*batch)
-    return torch.stack(Xs), torch.stack(masks), torch.stack(deltas), torch.stack(ys)
+    Xs, masks, deltas, actual_lens, ys = zip(*batch)
+    return (
+        torch.stack(Xs),
+        torch.stack(masks),
+        torch.stack(deltas),
+        torch.tensor(actual_lens, dtype=torch.long),
+        torch.stack(ys),
+    )
 
 
 # -------------------------
@@ -170,12 +176,13 @@ class FocalLoss(nn.Module):
 # LR schedule
 # -------------------------
 def make_warmup_cosine_scheduler(optimizer, warmup_epochs: int, total_epochs: int):
-    """Linear warmup for `warmup_epochs` then cosine decay to 0."""
+    """Linear warmup for `warmup_epochs` then cosine decay to 0.
+    The returned multiplier is clamped to [0, 1] so the LR never exceeds base_lr."""
     def lr_lambda(epoch):
         if epoch < warmup_epochs:
             return (epoch + 1) / max(1, warmup_epochs)
         progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min(1.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
@@ -321,28 +328,19 @@ def train(
     sample_X = sample[0]
     model = build_model_from_sample(sample_X, model_name, hidden_size=hidden_size, dropout=dropout).to(device)
 
-    # For GRU-D: load empirical mean so the decay targets the training distribution.
+    # For GRU-D: compute empirical mean from ALREADY-NORMALISED training samples.
+    # The dataset applies the scaler in __getitem__, so iterating train_ds gives
+    # z-score tensors. Using these tensors directly avoids any double-normalisation.
     if model_name == "grud":
-        x_mean = _load_grud_empirical_mean(index_path, model.n_features)
-        if x_mean is not None:
-            # Scale x_mean to z-score space so the decay target matches the normalised input.
-            _scaler_path_candidates = [
-                os.path.join(os.path.dirname(index_path), "scaler.json"),
-                os.path.join(os.path.dirname(index_path), "..", "scaler.json"),
-            ]
-            _scaler_data = None
-            for _candidate in _scaler_path_candidates:
-                if os.path.exists(_candidate):
-                    with open(_candidate) as _f:
-                        _scaler_data = json.load(_f)
-                    break
-            if _scaler_data is not None:
-                scaler_mean = torch.tensor(_scaler_data["mean"], dtype=torch.float32)
-                scaler_std  = torch.tensor(_scaler_data["std"],  dtype=torch.float32)
-                x_mean_scaled = (x_mean - scaler_mean) / (scaler_std + 1e-8)
-                model.set_empirical_mean(x_mean_scaled)
-            else:
-                model.set_empirical_mean(x_mean)
+        _x_sum = torch.zeros(model.n_features)
+        _x_cnt = torch.zeros(model.n_features)
+        for _i in range(len(train_ds)):
+            _Xb, _Mb, _Db, _al, _ = train_ds[_i]  # _Xb already normalised by dataset
+            _x_sum += (_Mb * _Xb).sum(dim=0)
+            _x_cnt += _Mb.sum(dim=0)
+        x_mean_normalised = _x_sum / _x_cnt.clamp(min=1.0)
+        model.set_empirical_mean(x_mean_normalised)
+        logger.info("GRU-D x_mean computed from %d normalised training samples.", len(train_ds))
 
     pos_weight = torch.tensor(
         [(neg / (pos + 1e-6)) if pos > 0 else 1.0],
@@ -386,12 +384,13 @@ def train(
                     logits = model(Xb, src_key_padding_mask=pad_mask_b)
                     loss = loss_fn(logits, yb)
             else:
-                Xb, Mb, Db, yb = batch
+                Xb, Mb, Db, _al, yb = batch
                 Xb, Mb, Db, yb = Xb.to(device), Mb.to(device), Db.to(device), yb.to(device)
                 with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
                     logits = model(Xb, Mb, Db)
                     loss = loss_fn(logits, yb)
 
+            unscaled_loss = loss.item()  # capture before AMP scaling mutates the graph
             scaler.scale(loss).backward()
             if clip_grad > 0:
                 scaler.unscale_(opt)
@@ -399,7 +398,7 @@ def train(
             scaler.step(opt)
             scaler.update()
 
-            running_loss += float(loss.item()) * Xb.size(0)
+            running_loss += unscaled_loss * Xb.size(0)
             seen += Xb.size(0)
 
         train_loss = running_loss / max(1, seen)
@@ -415,7 +414,7 @@ def train(
                     val_logits.extend(logits.tolist())
                     val_y.extend(yb.numpy().tolist())
                 else:
-                    Xb, Mb, Db, yb = batch
+                    Xb, Mb, Db, _al, yb = batch
                     with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
                         logits = model(Xb.to(device), Mb.to(device), Db.to(device)).cpu().numpy()
                     val_logits.extend(logits.tolist())
@@ -462,20 +461,65 @@ def train(
             )
             break
 
-    # Threshold calibration on the best-AUROC epoch's val predictions (matches model_best.pt).
-    # Fall back to final epoch if best was never recorded (e.g., no improvement at all).
-    cal_logits = best_val_logits if best_val_logits else final_val_logits
-    cal_y = best_val_y if best_val_y else final_val_y
-    threshold = calibrate_threshold(cal_logits, cal_y)
+    # --- Post-training calibration ---
+    # Step 1: reload model_best.pt and re-collect val logits from it.
+    # This ensures temperature scaling and threshold use the EXACT best-checkpoint weights,
+    # not whatever in-memory state the model was left in after early stopping.
     threshold_path = os.path.join(run_folder, "threshold.json")
-    with open(threshold_path, "w") as fh:
-        json.dump({"threshold": threshold, "method": "youden_j"}, fh, indent=2)
+    best_ckpt_path = os.path.join(ckpt_dir, "model_best.pt")
+    if os.path.exists(best_ckpt_path):
+        _best_sd = torch.load(best_ckpt_path, map_location=device, weights_only=True)
+        if isinstance(_best_sd, dict) and "model_state" in _best_sd:
+            _best_sd = _best_sd["model_state"]
+        model.load_state_dict(_best_sd)
+        logger.info("Reloaded model_best.pt for calibration.")
+        model.eval()
+        cal_logits, cal_y = [], []
+        with torch.no_grad():
+            for batch in val_loader:
+                if model_name == "transformer":
+                    Xb, pad_mask_b, yb = batch
+                    with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
+                        _logits = model(Xb.to(device), src_key_padding_mask=pad_mask_b.to(device)).cpu().numpy()
+                    cal_logits.extend(_logits.tolist())
+                    cal_y.extend(yb.numpy().tolist())
+                else:
+                    Xb, Mb, Db, _al, yb = batch
+                    with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
+                        _logits = model(Xb.to(device), Mb.to(device), Db.to(device)).cpu().numpy()
+                    cal_logits.extend(_logits.tolist())
+                    cal_y.extend(yb.numpy().tolist())
+    else:
+        # Fallback: use logits collected during training loop
+        cal_logits = best_val_logits if best_val_logits else final_val_logits
+        cal_y = best_val_y if best_val_y else final_val_y
+        logger.warning("model_best.pt not found; using in-memory logits for calibration.")
 
+    # Step 2: fit TemperatureScaler on best-checkpoint logits (W-03 / C-03).
     if use_temperature_scaling and len(cal_logits) >= 2 and len(np.unique(cal_y)) >= 2:
         temp_scaler = TemperatureScaler()
         temp_scaler.fit(np.array(cal_logits), np.array(cal_y))
-        temp_scaler.save(threshold_path)
         logger.info("Temperature scaling fitted: T=%.4f", temp_scaler.temperature)
+        # Step 3: apply temperature scaling to get calibrated probabilities.
+        cal_probs = temp_scaler.calibrate(np.array(cal_logits)).tolist()
+    else:
+        temp_scaler = None
+        # No temperature scaling: use sigmoid of raw logits as probabilities.
+        cal_probs = torch.sigmoid(torch.tensor(cal_logits, dtype=torch.float32)).numpy().tolist()
+
+    # Step 4: find optimal threshold on calibrated probabilities (C-03).
+    # calibrate_threshold expects logit-like values; pass log-odds of cal_probs so it
+    # applies sigmoid internally and gets back cal_probs (identity-safe workaround).
+    cal_np = np.array(cal_probs, dtype=np.float64)
+    cal_np = np.clip(cal_np, 1e-7, 1.0 - 1e-7)
+    cal_logodds = np.log(cal_np / (1.0 - cal_np)).tolist()
+    threshold = calibrate_threshold(cal_logodds, cal_y)
+
+    # Step 5: save threshold (and temperature if fitted).
+    with open(threshold_path, "w") as fh:
+        json.dump({"threshold": threshold, "method": "youden_j_on_calibrated_probs"}, fh, indent=2)
+    if temp_scaler is not None:
+        temp_scaler.save(threshold_path)
 
     logger.info("Calibrated decision threshold: %.4f (saved to %s)", threshold, threshold_path)
     logger.info("Training complete. Best AUROC=%.4f  Best AUPRC=%.4f", best_auc, best_ap)

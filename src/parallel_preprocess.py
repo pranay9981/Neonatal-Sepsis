@@ -83,7 +83,9 @@ def make_datetime_index(df):
 
 def ensure_unique_index(df):
     if df.index.duplicated().any():
-        df = df[~df.index.duplicated(keep='last')]
+        # Keep the FIRST occurrence (earliest timestamp) to preserve the earliest
+        # clinical events including sepsis onset rather than discarding them.
+        df = df[~df.index.duplicated(keep='first')]
     return df
 
 
@@ -132,6 +134,14 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
     delta_np = _compute_deltas(mask_np)                           # (T_res, F)
 
     # Impute for the input tensor (used by both Transformer and GRU-D as the "filled" X).
+    # NOTE: per-patient column mean is used here because population mean (from scaler.json)
+    # is not yet available at preprocessing time. This is intentional — scaler.json is
+    # produced by recompute_scaler_from_index() after create_splits.py.
+    logger.warning(
+        "Patient %s: imputing missing values with per-patient mean; "
+        "population mean from scaler.json is applied at training time via dataset.py.",
+        os.path.splitext(os.path.basename(fp))[0],
+    )
     col_mean = X_df_resampled.mean()
     X_df = X_df_resampled.ffill().bfill().fillna(col_mean).fillna(0.0)
 
@@ -183,7 +193,12 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
                     else:
                         pad_len_y = seq_len - n_rows_full
                         y_seq_raw = np.concatenate([np.zeros(pad_len_y, dtype=np.int8), y_seq_full])
-                except Exception:
+                except Exception as _e:
+                    patient_id_tmp = os.path.splitext(os.path.basename(fp))[0]
+                    logger.warning(
+                        "Patient %s: y_seq extraction failed (%s), defaulting y=1",
+                        patient_id_tmp, _e,
+                    )
                     y_seq_raw = None
                 break
         if y:
@@ -243,7 +258,7 @@ def _compute_and_save_scaler(x_paths, out_folder):
         return
     flat = np.concatenate(all_arrays, axis=0)        # (sum_actual_lens, F)
     feature_mean = flat.mean(axis=0).tolist()
-    feature_std = np.maximum(flat.std(axis=0), 1e-6).tolist()
+    feature_std = np.maximum(flat.std(axis=0), 1e-8).tolist()
     scaler = {
         "mean": feature_mean,
         "std": feature_std,
@@ -270,7 +285,10 @@ def main(raw_folder, out_folder, seq_len=48, nprocs=None):
     results = []
     with Pool(processes=nprocs) as p:
         for r in tqdm(p.imap_unordered(worker, files), total=len(files)):
-            results.append(r)
+            try:
+                results.append(r)
+            except Exception as e:
+                logger.error("Worker error collecting result: %s", e)
     x_paths = []
     ys = []
     failures = []

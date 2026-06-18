@@ -176,6 +176,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.cache_resource.clear()
         st.session_state.pop("page_modules", None)
+        for _key in list(sys.modules.keys()):
+            if 'app_pages' in _key:
+                del sys.modules[_key]
         st.rerun()
 
     st.markdown(

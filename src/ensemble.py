@@ -46,7 +46,12 @@ class EnsembleModel(nn.Module):
         deltas: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Returns blended probability (B,) — already passed through sigmoid.
+        Returns class probabilities (post-sigmoid), not logits.
+
+        The output is a blended probability in [0, 1] (shape: B,).
+        Do NOT use this output with BCEWithLogitsLoss (which applies sigmoid
+        internally and would double-sigmoid). Use BCELoss or a threshold
+        comparison directly. This model is intended for inference only.
         Caller must pass mask and deltas for GRU-D.
         """
         logit_t = self.transformer(x, src_key_padding_mask=pad_mask)

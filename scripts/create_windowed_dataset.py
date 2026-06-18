@@ -33,6 +33,28 @@ def _compute_deltas(mask_arr: np.ndarray) -> np.ndarray:
     return delta
 
 
+def _compute_window_deltas(mask_win: np.ndarray) -> np.ndarray:
+    """Compute GRU-D deltas relative to the window start.
+
+    C-11 fix: patient-global deltas are wrong for non-initial windows because
+    they carry elapsed time from the very start of the ICU stay.  GRU-D needs
+    deltas that reset at the beginning of each window so the decay function
+    reflects time-since-last-observation *within the window*.
+
+    Rules:
+    - delta[0, f] = 0 for all features (window-start anchor).
+    - delta[t, f] = 0          if feature f is observed at time t.
+    - delta[t, f] = delta[t-1, f] + 1  otherwise.
+    """
+    T, F = mask_win.shape
+    delta = np.zeros((T, F), dtype=np.float32)
+    for t in range(1, T):
+        # mask_win[t, f] == 1 means observed; reset delta to 0.
+        # mask_win[t, f] == 0 means missing; accumulate elapsed hours.
+        delta[t] = (delta[t - 1] + 1.0) * (1.0 - mask_win[t])
+    return delta
+
+
 def create_windowed_dataset(
     index_path: str,
     out_dir: str,
@@ -88,7 +110,7 @@ def create_windowed_dataset(
         pad_offset = T - actual_len  # index where real data begins
 
         window_count = 0
-        t_start = pad_offset  # first window must end at exactly seq_len (full window)
+        # W-19: removed dead t_start variable (was assigned but never used).
         if actual_len < seq_len:
             # Patient shorter than window — emit one window (the whole thing)
             t_starts = [0]
@@ -104,12 +126,17 @@ def create_windowed_dataset(
 
             X_win = X[t_end_excl - seq_len: t_end_excl]
             mask_win = mask_full[t_end_excl - seq_len: t_end_excl]
-            delta_win = delta_full[t_end_excl - seq_len: t_end_excl]
+            # C-11: recompute deltas relative to window start so GRU-D decay is
+            # correct for non-initial windows (patient-global deltas carry stale
+            # elapsed-time values from the ICU admission, not from window start).
+            delta_win = _compute_window_deltas(mask_win)
 
             # Prospective label: 1 if onset is within the next `horizon` hours.
             window_end_abs = t_end_excl - pad_offset  # position in real-time axis
             if onset_hour is not None:
-                label = int(onset_hour > window_end_abs and onset_hour <= window_end_abs + horizon)
+                # I-07: use >= so onset exactly at the window boundary is a positive
+                # label (previously strict '>' excluded that borderline case).
+                label = int(onset_hour >= window_end_abs and onset_hour <= window_end_abs + horizon)
             else:
                 # Fallback: use per-timestep labels for next horizon hours
                 next_horizon = y_seq[t_end_excl: t_end_excl + horizon]

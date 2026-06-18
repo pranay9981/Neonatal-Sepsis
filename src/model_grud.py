@@ -94,8 +94,10 @@ class GRUD(nn.Module):
             # Advance x_last: use freshly observed value; otherwise keep previous.
             x_last = mt * xt + (1.0 - mt) * x_last
 
-            # Scalar delta for hidden decay (mean across features)
-            delta_scalar = dt.mean(dim=-1, keepdim=True)  # (B, 1)
+            # Scalar delta for hidden decay: average only over MISSING features (mask=0).
+            # Observed features have no time-gap information relevant to decay.
+            missing = 1.0 - mt  # (B, F); 1 where feature is missing
+            delta_scalar = (missing * dt).sum(dim=-1, keepdim=True) / missing.sum(dim=-1, keepdim=True).clamp(min=1.0)  # (B, 1)
             gamma_h = torch.exp(-F.relu(self.W_gamma_h(delta_scalar)))  # (B, H)
             h_decayed = gamma_h * h  # hidden-state decay
 

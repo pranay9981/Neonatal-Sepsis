@@ -20,14 +20,28 @@ from evaluate import evaluate_single_ckpt, build_model_for_eval
 
 
 def _write_synthetic_data(folder: Path, n: int = 40, seq_len: int = 48, n_features: int = 40) -> str:
-    """Write n synthetic patient tensors and an index file."""
+    """Write n synthetic patient tensors and an index file.
+
+    Each patient tensor includes mask, deltas, and actual_len so that the primary
+    code path in PatientDataset (and evaluate.py) is exercised rather than the
+    backward-compatibility fallback for legacy files.
+    """
     folder.mkdir(parents=True, exist_ok=True)
     paths, labels = [], []
     for i in range(n):
         X = torch.randn(seq_len, n_features)
         y = i % 2
+        mask = torch.ones(seq_len, n_features)
+        deltas = torch.zeros(seq_len, n_features)
         p = folder / f"p{i:03d}.pt"
-        torch.save({"X": X, "y": y, "meta": {}}, p)
+        torch.save({
+            "X": X,
+            "y": y,
+            "mask": mask,
+            "deltas": deltas,
+            "actual_len": seq_len,
+            "meta": {},
+        }, p)
         paths.append(str(p))
         labels.append(y)
     idx_path = folder / "index.pt"

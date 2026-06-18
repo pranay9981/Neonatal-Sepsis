@@ -64,7 +64,7 @@ class TestCreateSplits:
         create_splits(idx, str(out))
         sets = {}
         for name in ("train", "val", "test"):
-            d = torch.load(out / f"{name}_index.pt", weights_only=False)
+            d = torch.load(out / f"{name}_index.pt", weights_only=True)
             sets[name] = set(d["x_paths"])
         assert sets["train"].isdisjoint(sets["test"]), "train/test overlap"
         assert sets["val"].isdisjoint(sets["test"]), "val/test overlap"
@@ -76,7 +76,7 @@ class TestCreateSplits:
         create_splits(idx, str(out))
         all_split = set()
         for name in ("train", "val", "test"):
-            d = torch.load(out / f"{name}_index.pt", weights_only=False)
+            d = torch.load(out / f"{name}_index.pt", weights_only=True)
             all_split |= set(d["x_paths"])
         assert all_split == set(paths), "Not all patients covered"
 
@@ -86,7 +86,7 @@ class TestCreateSplits:
         create_splits(idx, str(out), train_ratio=0.70, val_ratio=0.15)
         sizes = {}
         for name in ("train", "val", "test"):
-            d = torch.load(out / f"{name}_index.pt", weights_only=False)
+            d = torch.load(out / f"{name}_index.pt", weights_only=True)
             sizes[name] = len(d["x_paths"])
         total = sum(sizes.values())
         assert abs(sizes["train"] / total - 0.70) < 0.05
@@ -98,7 +98,7 @@ class TestCreateSplits:
         out = tmp_path / "splits"
         create_splits(idx, str(out))
         for name in ("train", "val", "test"):
-            d = torch.load(out / f"{name}_index.pt", weights_only=False)
+            d = torch.load(out / f"{name}_index.pt", weights_only=True)
             assert 1 in d["y"], f"No positives in {name} split"
             assert 0 in d["y"], f"No negatives in {name} split"
 
@@ -142,7 +142,7 @@ class TestDatasetScaler:
         sp.write_text(json.dumps(scaler))
         idx = self._make_patient_idx(tmp_path)
         ds = PatientDataset(idx, mode="grud", scaler_path=str(sp))
-        X, _, _, _ = ds[0]
+        X, _, _, _, _ = ds[0]
         assert torch.allclose(X, torch.zeros_like(X), atol=1e-5)
 
     def test_missing_scaler_path_is_ignored(self, tmp_path):
@@ -184,7 +184,7 @@ class TestSplitClientsExcludesTest:
         test_set = set(test_paths)
         all_client_paths = set()
         for i in range(1, 4):
-            d = torch.load(out_root / f"client{i}" / "index.pt", weights_only=False)
+            d = torch.load(out_root / f"client{i}" / "index.pt", weights_only=True)
             # Check the basenames match (files are copied)
             for p in d["x_paths"]:
                 all_client_paths.add(Path(p).name)

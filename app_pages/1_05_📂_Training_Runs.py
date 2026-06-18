@@ -178,6 +178,10 @@ class TrainingRunsPage:
                 'Training Curve</div>',
                 unsafe_allow_html=True,
             )
+            # Guard: add 'epoch' column if missing (W-33)
+            if 'epoch' not in mdf.columns:
+                mdf = mdf.copy()
+                mdf['epoch'] = range(1, len(mdf) + 1)
             fig = go.Figure()
             if "train_loss" in mdf.columns:
                 fig.add_trace(go.Scatter(

@@ -73,45 +73,55 @@ class TestProcessFile:
     def test_success_full_length(self):
         path = _make_psv(n_rows=60)
         with tempfile.TemporaryDirectory() as out_dir:
-            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            result = process_file(path, out_dir, seq_len=48)
+            fp, ok = result[0], result[1]
+            info = result[2]
             assert ok, f"Expected success, got: {info}"
-            d = torch.load(info, weights_only=False)
+            d = torch.load(info, weights_only=True)
             assert d["X"].shape == (48, 40)
         os.unlink(path)
 
     def test_success_short_sequence_padded(self):
         path = _make_psv(n_rows=10)
         with tempfile.TemporaryDirectory() as out_dir:
-            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            result = process_file(path, out_dir, seq_len=48)
+            fp, ok = result[0], result[1]
+            info = result[2]
             assert ok, f"Expected success with padding, got: {info}"
-            d = torch.load(info, weights_only=False)
+            d = torch.load(info, weights_only=True)
             assert d["X"].shape == (48, 40)
         os.unlink(path)
 
     def test_label_extracted_positive(self):
         path = _make_psv(n_rows=20, sepsis_label=1)
         with tempfile.TemporaryDirectory() as out_dir:
-            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            result = process_file(path, out_dir, seq_len=48)
+            fp, ok = result[0], result[1]
+            info = result[2]
             assert ok
-            d = torch.load(info, weights_only=False)
+            d = torch.load(info, weights_only=True)
             assert d["y"] == 1
         os.unlink(path)
 
     def test_label_extracted_negative(self):
         path = _make_psv(n_rows=20, sepsis_label=0)
         with tempfile.TemporaryDirectory() as out_dir:
-            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            result = process_file(path, out_dir, seq_len=48)
+            fp, ok = result[0], result[1]
+            info = result[2]
             assert ok
-            d = torch.load(info, weights_only=False)
+            d = torch.load(info, weights_only=True)
             assert d["y"] == 0
         os.unlink(path)
 
     def test_output_tensor_is_finite(self):
         path = _make_psv(n_rows=50)
         with tempfile.TemporaryDirectory() as out_dir:
-            fp, ok, info = process_file(path, out_dir, seq_len=48)
+            result = process_file(path, out_dir, seq_len=48)
+            fp, ok = result[0], result[1]
+            info = result[2]
             assert ok
-            d = torch.load(info, weights_only=False)
+            d = torch.load(info, weights_only=True)
             assert torch.isfinite(d["X"]).all()
         os.unlink(path)
 

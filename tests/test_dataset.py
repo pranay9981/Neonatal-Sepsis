@@ -115,10 +115,11 @@ class TestPatientDatasetGRUD:
         paths = [_make_patient(tmp_path, f"p{i:03d}.pt") for i in range(3)]
         idx = _make_index(tmp_path, paths, [0] * 3)
         ds = PatientDataset(idx, mode="grud")
-        X, mask, delta, y = ds[0]
+        X, mask, delta, actual_len, y = ds[0]
         assert X.shape == (48, 40)
         assert mask.shape == (48, 40)
         assert delta.shape == (48, 40)
+        assert isinstance(actual_len, int)
         assert y.shape == torch.Size([])
 
     def test_mask_binary(self, tmp_path):
@@ -126,7 +127,7 @@ class TestPatientDatasetGRUD:
         paths = [_make_patient(tmp_path, f"p{i:03d}.pt") for i in range(3)]
         idx = _make_index(tmp_path, paths, [0] * 3)
         ds = PatientDataset(idx, mode="grud")
-        X, mask, delta, _ = ds[0]
+        X, mask, delta, actual_len, _ = ds[0]
         unique_mask = torch.unique(mask)
         for v in unique_mask:
             assert v.item() in (0.0, 1.0), f"Unexpected mask value: {v.item()}"
@@ -135,7 +136,7 @@ class TestPatientDatasetGRUD:
         paths = [_make_patient(tmp_path, f"p{i:03d}.pt") for i in range(3)]
         idx = _make_index(tmp_path, paths, [0] * 3)
         ds = PatientDataset(idx, mode="grud")
-        _, _, delta, _ = ds[0]
+        _, _, delta, actual_len, _ = ds[0]
         assert (delta >= 0).all()
 
     def test_grud_with_nan_features(self, tmp_path):
@@ -148,7 +149,7 @@ class TestPatientDatasetGRUD:
         torch.save({"X": X, "y": 0, "meta": {}}, p)
         idx = _make_index(tmp_path, [str(p)], [0])
         ds = PatientDataset(idx, mode="grud")
-        X_out, mask, delta, y = ds[0]
+        X_out, mask, delta, actual_len, y = ds[0]
         assert mask[5, 3].item() == 0.0
         assert mask[10, 15].item() == 0.0
 
@@ -163,9 +164,20 @@ class TestPatientDatasetGRUD:
         torch.save({"X": X, "mask": mask, "deltas": deltas, "actual_len": 48, "y": 1, "meta": {}}, p)
         idx = _make_index(tmp_path, [str(p)], [1])
         ds = PatientDataset(idx, mode="grud")
-        _, m_out, d_out, _ = ds[0]
+        _, m_out, d_out, actual_len, _ = ds[0]
         assert m_out[3, 7].item() == 0.0, "Should use pre-computed mask"
         assert d_out[4, 7].item() == 1.0, "Should use pre-computed deltas"
+
+    def test_grud_actual_len_returned(self, tmp_path):
+        """actual_len must be returned as the 4th element of the GRU-D tuple."""
+        paths = [_make_patient(tmp_path, "p000.pt", seq_len=48)]
+        idx = _make_index(tmp_path, paths, [0])
+        ds = PatientDataset(idx, mode="grud")
+        result = ds[0]
+        assert len(result) == 5, f"GRU-D tuple should have 5 elements, got {len(result)}"
+        actual_len = result[3]
+        assert isinstance(actual_len, int), "actual_len should be an int"
+        assert actual_len == 48
 
 
 class TestPatientDatasetEdgeCases:

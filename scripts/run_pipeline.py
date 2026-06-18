@@ -156,6 +156,8 @@ def main():
                     "--lr", str(args.lr),
                     "--patience", str(args.patience),
                     "--run_name", args.run_name,
+                    # C-20: pass scaler so GRU-D trains on normalised features.
+                    "--scaler_path", str(processed_dir / "scaler.json"),
                 ],
                 "Step 3/7 — Local training (on train split)",
                 env,
@@ -196,6 +198,8 @@ def main():
                     "--local_epochs", str(args.fl_local_epochs),
                     "--n_features", str(args.n_features),
                     "--seq_len", str(args.seq_len),
+                    # C-21: pass scaler so FL clients train on normalised features.
+                    "--scaler_path", str(processed_dir / "scaler.json"),
                 ],
                 "Step 5/7 — Federated learning simulation",
                 env,

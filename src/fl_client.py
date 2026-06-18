@@ -65,7 +65,13 @@ def ndarrays_to_state_dict_by_order(
 ) -> Dict[str, torch.Tensor]:
     sd = model.state_dict()
     keys = list(sd.keys())
-    map_len = min(len(keys), len(arrays))
+    # W-08: Reject mismatched parameter counts so misaligned weights are never
+    # silently loaded into a partial state dict.
+    if len(arrays) != len(keys):
+        raise ValueError(
+            f"FL parameter mismatch: got {len(arrays)} arrays but model has {len(keys)} keys"
+        )
+    map_len = len(keys)
     new_sd = {}
     for k, arr in zip(keys[:map_len], arrays[:map_len]):
         t = torch.tensor(arr)
@@ -144,6 +150,7 @@ class FlowerClient(fl.client.NumPyClient):
         seq_len: Optional[int] = None,
         mu: float = 0.01,
         clip_grad: float = 1.0,
+        scaler_path: Optional[str] = None,
     ):
         assert PatientDataset is not None
         self.index_path = index_path
@@ -154,10 +161,12 @@ class FlowerClient(fl.client.NumPyClient):
         self.local_epochs = local_epochs
         self.mu = mu
         self.clip_grad = clip_grad
+        self.scaler_path = scaler_path
         self.global_tensors: Optional[List[torch.Tensor]] = None
 
         ds_mode = "transformer" if model_name == "transformer" else "grud"
-        ds = PatientDataset(index_path, mode=ds_mode)
+        # C-21: pass scaler_path so the dataset normalises features consistently.
+        ds = PatientDataset(index_path, mode=ds_mode, scaler_path=scaler_path)
 
         # Infer n_features / seq_len from the first sample.
         if n_features is None:
@@ -186,6 +195,11 @@ class FlowerClient(fl.client.NumPyClient):
 
         self.model = build_model(self.model_name, self.n_features, self.seq_len, self.device)
 
+        # C-05: Store local_x_mean so it can be restored after FL aggregation
+        # overwrites it.  FL-averaged x_mean collapses to ≈0 across clients;
+        # each client must use its own empirical mean derived from local data.
+        self.local_x_mean: Optional[torch.Tensor] = None
+
         # Load empirical mean for GRU-D.
         if model_name == "grud":
             x_mean = _load_grud_empirical_mean(index_path, self.n_features)
@@ -206,8 +220,10 @@ class FlowerClient(fl.client.NumPyClient):
                     scaler_std  = torch.tensor(_scaler_data["std"],  dtype=torch.float32)
                     x_mean_scaled = (x_mean - scaler_mean) / (scaler_std + 1e-8)
                     self.model.set_empirical_mean(x_mean_scaled)
+                    self.local_x_mean = x_mean_scaled.clone()
                 else:
                     self.model.set_empirical_mean(x_mean)
+                    self.local_x_mean = x_mean.clone()
 
         self.loss_fn = nn.BCEWithLogitsLoss(reduction="mean")
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr)
@@ -260,8 +276,51 @@ class FlowerClient(fl.client.NumPyClient):
         return state_dict_to_ndarrays(self.model.state_dict())
 
     def set_parameters(self, arrays: List[np.ndarray]):
-        sd = ndarrays_to_state_dict_by_order(self.model, arrays)
-        self.model.load_state_dict(sd)
+        current_sd = self.model.state_dict()
+        all_keys = list(current_sd.keys())
+
+        if len(arrays) == len(all_keys):
+            # FedAvg path: full state-dict replacement via the strict helper.
+            sd = ndarrays_to_state_dict_by_order(self.model, arrays)
+            self.model.load_state_dict(sd)
+        else:
+            # FedBN path: server sends only non-norm parameters.  Map them by
+            # order onto the non-norm keys and leave norm params unchanged.
+            # Import BN_KEYWORDS from fl_fedbn to keep the exclusion logic in
+            # one place; fall back to an empty tuple if unavailable.
+            try:
+                from fl_fedbn import FedBNStrategy
+                bn_keywords = FedBNStrategy.BN_KEYWORDS
+            except Exception:
+                bn_keywords = ()
+
+            non_bn_keys = [k for k in all_keys
+                           if not any(kw in k or kw.lower() in k.lower() for kw in bn_keywords)]
+            if len(arrays) != len(non_bn_keys):
+                raise ValueError(
+                    f"FL parameter mismatch: got {len(arrays)} arrays but model has "
+                    f"{len(all_keys)} total keys / {len(non_bn_keys)} non-norm keys"
+                )
+            # Apply only the non-norm arrays; norm params stay as-is (local).
+            for key, arr in zip(non_bn_keys, arrays):
+                t = torch.tensor(arr)
+                if t.shape != current_sd[key].shape:
+                    try:
+                        t = t.view(current_sd[key].shape)
+                    except Exception:
+                        raise RuntimeError(
+                            f"Cannot map FedBN array for key {key}: "
+                            f"got {tuple(t.shape)}, expected {tuple(current_sd[key].shape)}"
+                        )
+                current_sd[key] = t
+            self.model.load_state_dict(current_sd)
+
+        # C-05: FL aggregation averages x_mean across clients → collapses to ≈0.
+        # After loading server parameters, restore the locally computed x_mean so
+        # GRU-D decay targets remain anchored to this client's data distribution.
+        if self.model_name == "grud" and self.local_x_mean is not None:
+            if hasattr(self.model, "x_mean"):
+                self.model.x_mean.data.copy_(self.local_x_mean.to(self.model.x_mean.device))
 
     def fit(
         self, parameters: List[np.ndarray], config: Dict[str, Any]
@@ -335,8 +394,13 @@ class FlowerClient(fl.client.NumPyClient):
                     "[TRAIN] epoch %d/%d  loss=%.4f", epoch + 1, self.local_epochs, running_loss / n_samples
                 )
 
-        metrics = self.evaluate_local()
-        return state_dict_to_ndarrays(self.model.state_dict()), len(self.train_loader.dataset), metrics
+        # I-05: fit() must return only training metrics (train_loss, num_examples).
+        # Validation/evaluation metrics belong exclusively in evaluate() so the
+        # server can aggregate them separately via evaluate_metrics_aggregation_fn.
+        train_metrics: Dict[str, float] = {
+            "train_loss": running_loss / n_samples if n_samples > 0 else float("nan"),
+        }
+        return state_dict_to_ndarrays(self.model.state_dict()), len(self.train_loader.dataset), train_metrics
 
     def evaluate(
         self, parameters: List[np.ndarray], config: Dict[str, Any]
@@ -420,6 +484,7 @@ def start_client(
     clip_grad: float = 1.0,
     max_retries: int = 20,
     retry_delay: float = 2.0,
+    scaler_path: Optional[str] = None,
 ):
     """Connect to the FL server; retries up to max_retries times on connection failure."""
     client = FlowerClient(
@@ -433,6 +498,7 @@ def start_client(
         seq_len=seq_len,
         mu=mu,
         clip_grad=clip_grad,
+        scaler_path=scaler_path,
     )
     client_obj = client.to_client()
     attempt = 0
@@ -462,6 +528,7 @@ if __name__ == "__main__":
     ap.add_argument("--seq_len", type=int, default=None)
     ap.add_argument("--mu", type=float, default=0.01, help="FedProx proximal term weight (0=plain FedAvg)")
     ap.add_argument("--clip_grad", type=float, default=1.0, help="Max gradient norm (0 to disable)")
+    ap.add_argument("--scaler_path", default=None, help="Path to scaler.json for feature normalisation")
     args = ap.parse_args()
 
     start_client(
@@ -476,4 +543,5 @@ if __name__ == "__main__":
         seq_len=args.seq_len,
         mu=args.mu,
         clip_grad=args.clip_grad,
+        scaler_path=args.scaler_path,
     )

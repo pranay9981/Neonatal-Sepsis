@@ -31,7 +31,10 @@ def split_into_clients(
 ) -> list:
     ensure_dir(out_root)
     idx_path = os.path.join(processed_folder, "index_with_labels.pt")
-    d = torch.load(idx_path, weights_only=False)
+    # I-04: These index files contain plain Python lists/strings, not arbitrary
+    # objects, so weights_only=False is required (weights_only=True only handles
+    # tensors and a small set of primitives — lists of strings are excluded).
+    d = torch.load(idx_path, weights_only=False)  # nosec: index file, no tensors
     x_paths = d["x_paths"]
     labels = [int(float(y)) for y in d.get("y", [])]
     n_total = len(x_paths)
@@ -40,9 +43,13 @@ def split_into_clients(
     if splits_dir is not None:
         test_idx_path = os.path.join(splits_dir, "test_index.pt")
         if os.path.exists(test_idx_path):
-            test_d = torch.load(test_idx_path, weights_only=False)
-            test_set = set(test_d.get("x_paths", []))
-            filtered = [(p, l) for p, l in zip(x_paths, labels) if p not in test_set]
+            test_d = torch.load(test_idx_path, weights_only=False)  # nosec: index file
+            # W-11: Normalise paths via pathlib so mixed-slash paths on Windows
+            # (e.g. from different OS origins) compare equal and test patients
+            # are never silently leaked into the FL partition.
+            test_set = {str(Path(p).resolve()) for p in test_d.get("x_paths", [])}
+            filtered = [(p, l) for p, l in zip(x_paths, labels)
+                        if str(Path(p).resolve()) not in test_set]
             if filtered:
                 x_paths, labels = zip(*filtered)
                 x_paths, labels = list(x_paths), list(labels)

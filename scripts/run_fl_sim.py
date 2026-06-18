@@ -34,6 +34,9 @@ def run_fl_sim(
     seq_len=48,
     client_startup_delay=6.0,
     strategy="fedavg",
+    scaler_path=None,
+    fedprox_mu=0.0,
+    clip_grad=1.0,
 ):
     save_dir = save_dir or str(PROJECT_ROOT / "server_out")
     checkpoints_dir = checkpoints_dir or str(PROJECT_ROOT / "checkpoints")
@@ -60,18 +63,26 @@ def run_fl_sim(
         "--strategy", strategy,
     ]
 
+    # W-13: Build per-client base command including configurable FedProx mu and
+    # clip_grad so these are wirable from the CLI rather than hard-coded.
+    _client_base = [
+        sys.executable,
+        str(SRC_DIR / "fl_client.py"),
+        "--model", model,
+        "--server_address", f"{host}:{port}",
+        "--local_epochs", str(local_epochs),
+        "--batch_size", str(batch_size),
+        "--n_features", str(n_features),
+        "--seq_len", str(seq_len),
+        "--mu", str(fedprox_mu),
+        "--clip_grad", str(clip_grad),
+    ]
+    # C-21: propagate scaler_path so clients normalise features during FL training.
+    if scaler_path is not None:
+        _client_base += ["--scaler_path", str(scaler_path)]
+
     client_cmds = [
-        [
-            sys.executable,
-            str(SRC_DIR / "fl_client.py"),
-            "--index", str(idx),
-            "--server_address", f"{host}:{port}",
-            "--model", model,
-            "--local_epochs", str(local_epochs),
-            "--batch_size", str(batch_size),
-            "--n_features", str(n_features),
-            "--seq_len", str(seq_len),
-        ]
+        _client_base + ["--index", str(idx)]
         for idx in client_indexes
     ]
 
@@ -100,7 +111,12 @@ def run_fl_sim(
     all_procs = [server_proc] + client_procs
 
     try:
-        rc_server = server_proc.wait()
+        # W-12: add a 1-hour timeout so the simulation cannot hang indefinitely.
+        try:
+            rc_server = server_proc.wait(timeout=3600)
+        except subprocess.TimeoutExpired:
+            server_proc.kill()
+            raise RuntimeError("FL simulation timed out after 1 hour")
         if rc_server != 0:
             print(f"[FL-SIM] WARNING: Server exited with code {rc_server}")
         else:
@@ -147,6 +163,14 @@ if __name__ == "__main__":
     ap.add_argument("--save_dir", default=None)
     ap.add_argument("--checkpoints_dir", default=None)
     ap.add_argument("--strategy", choices=["fedavg", "fedbn"], default="fedavg")
+    # W-13: FedProx mu and clip_grad are now CLI-configurable.
+    ap.add_argument("--fedprox_mu", type=float, default=0.0,
+                    help="FedProx proximal term coefficient (0=plain FedAvg)")
+    ap.add_argument("--clip_grad", type=float, default=1.0,
+                    help="Gradient clipping max norm (0 to disable)")
+    # C-21: scaler_path forwarded to all clients for feature normalisation.
+    ap.add_argument("--scaler_path", default=None,
+                    help="Path to scaler.json for feature normalisation")
     args = ap.parse_args()
 
     run_fl_sim(
@@ -163,4 +187,7 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         checkpoints_dir=args.checkpoints_dir,
         strategy=args.strategy,
+        scaler_path=args.scaler_path,
+        fedprox_mu=args.fedprox_mu,
+        clip_grad=args.clip_grad,
     )

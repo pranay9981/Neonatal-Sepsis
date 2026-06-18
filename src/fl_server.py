@@ -123,6 +123,19 @@ def arrays_to_state_dict_by_order(model: torch.nn.Module, arrays: List[np.ndarra
     return sd
 
 
+# C-08: Weighted average aggregation for evaluate metrics (AUROC/AUPRC).
+# Without this function the server discards per-client evaluation metrics and
+# can only select the best model by loss — missing the primary clinical signals.
+def weighted_average(metrics):
+    """Aggregate evaluation metrics from clients using a weighted mean."""
+    total = sum(n for n, _ in metrics)
+    if total == 0:
+        return {}
+    auroc = sum(n * m.get("auroc", 0.0) for n, m in metrics) / total
+    auprc = sum(n * m.get("auprc", 0.0) for n, m in metrics) / total
+    return {"auroc": auroc, "auprc": auprc}
+
+
 class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
     """
     FedAvg extension that saves aggregated model parameters each round to PT files,
@@ -141,6 +154,9 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         *args,
         **kwargs,
     ):
+        # C-08: Inject weighted_average so AUROC/AUPRC are aggregated and
+        # visible in aggregated_metrics — not silently discarded.
+        kwargs.setdefault("evaluate_metrics_aggregation_fn", weighted_average)
         super().__init__(*args, **kwargs)
         self.model_name = model_name
         self.n_features = n_features
@@ -150,16 +166,17 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         self.checkpoints_dir = checkpoints_dir
         os.makedirs(self.checkpoints_dir, exist_ok=True)
         self.best_name = best_name
-        
-        # --- START OF FIX ---
+
         # Changed the metric priority list to match the keys provided by the client ("auroc", "auprc")
         self.metric_priority = metric_priority or ["auroc", "auprc", "loss"]
-        # --- END OF FIX ---
-        
+
         self.best_metric_value = None
         self.best_round = None
         self.best_path = None
         self.best_chosen_key = None
+        # W-09: Track which metric key drove the current best so we can reset
+        # best_metric_value whenever the key changes (avoids stale comparisons).
+        self._tracked_metric_key = None
 
     def aggregate_fit(self, server_round: int, results, failures):
         """Call parent to aggregate, then save aggregated parameters as PT checkpoint."""
@@ -236,7 +253,12 @@ class SaveEveryRoundFedAvg(fl.server.strategy.FedAvg):
         if val is not None and not np.isnan(val):
             # interpret metric sign: for 'loss' and 'val_loss' smaller is better; for AUC-like larger is better
             better = False
-            if self.best_metric_value is None or chosen_key != self.best_chosen_key:
+            # W-09: Reset best_metric_value whenever the tracked metric key changes
+            # so stale values from a different metric do not corrupt the comparison.
+            if chosen_key != self._tracked_metric_key:
+                self.best_metric_value = -float("inf")
+                self._tracked_metric_key = chosen_key
+            if self.best_metric_value is None or self.best_metric_value == -float("inf"):
                 better = True
                 self.best_chosen_key = chosen_key
             else:

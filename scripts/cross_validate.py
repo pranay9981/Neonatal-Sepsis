@@ -29,6 +29,59 @@ from dataset import PatientDataset
 from train_local import train, seed_everything
 from logging_config import get_logger
 
+
+def _fit_fold_scaler(x_paths, indices, base_scaler_path, fold_scaler_path):
+    """Fit a StandardScaler on the fold training patients only and write it to fold_scaler_path.
+
+    Reads each patient's X tensor, accumulates per-feature mean/std, and writes a
+    scaler.json in the same format as the project-wide scaler.  Falls back to the
+    project-wide scaler when a per-patient file cannot be loaded.
+    """
+    x_sum = None
+    x_sq_sum = None
+    x_cnt = None
+
+    for i in indices:
+        try:
+            data = torch.load(x_paths[i], weights_only=False)
+        except Exception:
+            continue
+        X = data["X"].numpy().astype(np.float64)  # (T, F)
+        mask = (~np.isnan(X)).astype(np.float64)
+        X_valid = np.where(mask, X, 0.0)
+        if x_sum is None:
+            F = X.shape[1]
+            x_sum = np.zeros(F, dtype=np.float64)
+            x_sq_sum = np.zeros(F, dtype=np.float64)
+            x_cnt = np.zeros(F, dtype=np.float64)
+        x_sum += X_valid.sum(axis=0)
+        x_sq_sum += (X_valid ** 2).sum(axis=0)
+        x_cnt += mask.sum(axis=0)
+
+    if x_sum is None or x_cnt is None or (x_cnt == 0).all():
+        # Nothing to fit — fall back to the global scaler
+        if base_scaler_path and os.path.exists(base_scaler_path):
+            import shutil
+            shutil.copy2(base_scaler_path, fold_scaler_path)
+        return
+
+    mean = x_sum / np.where(x_cnt > 0, x_cnt, 1.0)
+    var = x_sq_sum / np.where(x_cnt > 0, x_cnt, 1.0) - mean ** 2
+    std = np.sqrt(np.maximum(var, 1e-8))
+    # Where we have no observations fall back to global scaler values if available
+    if base_scaler_path and os.path.exists(base_scaler_path):
+        with open(base_scaler_path) as f:
+            global_sc = json.load(f)
+        global_mean = np.array(global_sc.get("mean", [0.0] * len(mean)))
+        global_std = np.array(global_sc.get("std", [1.0] * len(std)))
+        mean = np.where(x_cnt > 0, mean, global_mean)
+        std = np.where(x_cnt > 0, std, global_std)
+
+    scaler_dict = {"mean": mean.tolist(), "std": std.tolist()}
+    with open(fold_scaler_path, "w") as f:
+        json.dump(scaler_dict, f)
+
+
 logger = get_logger(__name__)
 
 
@@ -90,6 +143,12 @@ def run_cv(
                 val_idx_path,
             )
 
+            # C-12 / W-45: Fit scaler ONLY on fold train patients to prevent data leakage.
+            # The fold val patients must not influence the scaler at any point.
+            fold_scaler_path = os.path.join(tmpdir, f"fold{fold}_scaler.json")
+            _fit_fold_scaler(x_paths, train_sub, scaler_path, fold_scaler_path)
+            logger.info("Fold %d: scaler fitted on %d train patients -> %s", fold, len(train_sub), fold_scaler_path)
+
             run_folder_root = os.path.join(tmpdir, f"runs_fold{fold}")
             train(
                 index_path=train_idx_path,
@@ -101,7 +160,7 @@ def run_cv(
                 run_name=f"cv_fold{fold}",
                 checkpoint_root=run_folder_root,
                 patience=patience,
-                scaler_path=scaler_path,
+                scaler_path=fold_scaler_path,
             )
 
             # Find best checkpoint from this fold
@@ -115,12 +174,14 @@ def run_cv(
                 continue
             best_ckpt = ckpts[0]
 
-            # Evaluate on val fold
+            # W-45: Pass fold-specific scaler to evaluate_single_ckpt so val features
+            # are normalised with the same fold-train statistics (not raw/unnormalised).
             from evaluate import evaluate_single_ckpt
             result = evaluate_single_ckpt(
                 index_path=val_idx_path,
                 ckpt_path=str(best_ckpt),
                 model_name=model_name,
+                scaler_path=fold_scaler_path,
             )
             auroc = result.get("auroc") or 0.0
             auprc = result.get("auprc") or 0.0

@@ -10,7 +10,8 @@ from typing import Optional
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 
-SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
@@ -33,9 +34,9 @@ except Exception as _import_err:
     )
     TimeSeriesTransformer = None
     GRUD = None
-    _MODEL_PATH = "server_out/global_best.pt"
-    _EVAL_FED   = "eval_results_federated.json"
-    _SCALER_PATH = "data/processed/patients/scaler.json"
+    _MODEL_PATH = str(PROJECT_ROOT / "server_out" / "global_best.pt")
+    _EVAL_FED   = str(PROJECT_ROOT / "eval_results_federated.json")
+    _SCALER_PATH = str(PROJECT_ROOT / "data" / "processed" / "patients" / "scaler.json")
     N_FEATURES = 40
     SEQ_LEN = 48
 
@@ -53,7 +54,9 @@ FEATURE_NAMES = [
     "TroponinI", "Hct", "Hgb", "PTT", "WBC", "Fibrinogen", "Platelets",
     "Age", "Gender", "Unit1", "Unit2", "HospAdmTime", "ICULOS",
 ]
-assert len(FEATURE_NAMES) == N_FEATURES
+if len(FEATURE_NAMES) != N_FEATURES:
+    st.error(f"N_FEATURES mismatch: expected {len(FEATURE_NAMES)}, got {N_FEATURES}. Check environment config.")
+    st.stop()
 
 FEATURE_SPEC = {
     "HR": (140.0, 30.0, 240.0, 1.0),
@@ -104,12 +107,13 @@ for fname in FEATURE_NAMES:
 
 # ── Loaders ────────────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_model(model_path: str, n_features: int = N_FEATURES, seq_len: int = SEQ_LEN):
+def load_model(model_path: str, model_type: str, n_features: int = N_FEATURES, seq_len: int = SEQ_LEN):
+    """Cache key includes model_type so cache invalidates when model type changes (W-38)."""
     p = Path(model_path)
     if not p.exists():
         return None, f"Model file not found: {model_path}"
     try:
-        if MODEL_TYPE == "grud":
+        if model_type == "grud":
             if GRUD is None:
                 return None, "Could not import GRUD"
             m = GRUD(n_features=n_features)
@@ -207,13 +211,46 @@ def preprocess_dataframe(df: pd.DataFrame, seq_len: int = SEQ_LEN,
     return torch.tensor(data_np).unsqueeze(0), messages
 
 
+def _compute_grud_inputs(tensor: torch.Tensor):
+    """Compute actual missingness mask and time-delta inputs for GRU-D (W-36).
+
+    Args:
+        tensor: shape (1, seq_len, n_features) — may contain zeros where data was
+                missing/padded. NaN values would be masked as missing; zeros from
+                padding are treated as observed (consistent with preprocess_dataframe).
+
+    Returns:
+        mask:   (1, seq_len, n_features) — 1 where observed, 0 where NaN
+        deltas: (1, seq_len, n_features) — time since last observation per feature
+    """
+    x = tensor  # (1, T, F)
+    # Build mask: 1 where not NaN, 0 where NaN
+    mask = (~torch.isnan(x)).float()
+    # Replace NaN with 0 for delta computation
+    x_clean = torch.nan_to_num(x, nan=0.0)
+    _ = x_clean  # mask already computed; keep for reference
+
+    T = x.shape[1]
+    F = x.shape[2]
+    deltas = torch.zeros_like(x)
+    # For each feature, compute time since last observed timestep
+    for t in range(1, T):
+        for f in range(F):
+            if mask[0, t, f] == 0:
+                # Feature is missing at t — delta = delta[t-1] + 1 (time gap grows)
+                deltas[0, t, f] = deltas[0, t - 1, f] + 1.0
+            else:
+                # Feature observed — delta = 0 (just observed)
+                deltas[0, t, f] = 0.0
+    return mask, deltas
+
+
 def safe_predict(model, tensor):
     try:
         model.eval()
         with torch.no_grad():
             if MODEL_TYPE == "grud":
-                mask = torch.ones_like(tensor)
-                deltas = torch.zeros_like(tensor)
+                mask, deltas = _compute_grud_inputs(tensor)
                 out = model(tensor, mask, deltas)
             else:
                 out = model(tensor)
@@ -228,8 +265,7 @@ def safe_predict(model, tensor):
 
 def _model_forward(model, x):
     if MODEL_TYPE == "grud":
-        mask = torch.ones_like(x)
-        deltas = torch.zeros_like(x)
+        mask, deltas = _compute_grud_inputs(x)
         return model(x, mask, deltas)
     return model(x)
 
@@ -326,7 +362,8 @@ def parse_text_to_df(text: str):
 
 
 def template_csv_random():
-    rng = np.random.default_rng()
+    np.random.seed(42)
+    rng = np.random.default_rng(42)
     rows = []
     for _ in range(SEQ_LEN):
         row = []
@@ -369,7 +406,7 @@ class PredictPage:
         """, unsafe_allow_html=True)
 
         # ── Model status ───────────────────────────────────────────────────────
-        model, model_err = load_model(str(MODEL_PATH))
+        model, model_err = load_model(str(MODEL_PATH), MODEL_TYPE)
         eval_data = load_eval_data(str(EVAL_FEDERATED_JSON))
         scaler    = load_scaler(str(SCALER_PATH))
 
@@ -449,6 +486,11 @@ class PredictPage:
 
         if "df_input_temp" not in st.session_state:
             st.session_state.df_input_temp = None
+
+        # Clear df_input_temp when user switches input mode (I-15)
+        if st.session_state.get('input_mode') != mode:
+            st.session_state.pop('df_input_temp', None)
+            st.session_state['input_mode'] = mode
 
         # ── Upload CSV ──────────────────────────────────────────────────────────
         if mode == "Upload CSV file":
@@ -677,7 +719,7 @@ class PredictPage:
                         paper_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="Inter, Segoe UI, sans-serif", color="#94A3B8"),
                     )
-                    st.plotly_chart(fig_gauge, width='stretch')
+                    st.plotly_chart(fig_gauge, use_container_width=True)
 
                 with col_info:
                     st.markdown(
@@ -763,7 +805,7 @@ class PredictPage:
                             yaxis=dict(gridcolor="#1E2A45", tickfont=dict(color="#64748B"),
                                        linecolor="#1E2A45"),
                         )
-                        st.plotly_chart(fig_imp, width='stretch')
+                        st.plotly_chart(fig_imp, use_container_width=True)
                     else:
                         st.warning("Feature importance could not be computed for this input.")
 
@@ -775,9 +817,14 @@ class PredictPage:
                         unsafe_allow_html=True,
                     )
                     if eval_data:
-                        st.plotly_chart(
-                            plot_threshold_sensitivity(eval_data["y_true"], eval_data["y_prob"], threshold),
-                            width='stretch',
-                        )
+                        _yt = eval_data.get('y_true')
+                        _yp = eval_data.get('y_prob')
+                        if _yt is None or _yp is None:
+                            st.error("Evaluation file is missing 'y_true' or 'y_prob' keys.")
+                        else:
+                            st.plotly_chart(
+                                plot_threshold_sensitivity(_yt, _yp, threshold),
+                                use_container_width=True,
+                            )
                     else:
                         st.info("Run evaluation first to enable this chart.")

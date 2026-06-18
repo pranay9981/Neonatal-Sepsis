@@ -10,6 +10,7 @@ Beyond AUROC/AUPRC, clinicians care about:
   - Subgroup performance (gestational age, birth weight, ICULOS quartile)
 """
 from __future__ import annotations
+import math
 import warnings
 import numpy as np
 from sklearn.metrics import roc_curve, precision_recall_curve
@@ -82,7 +83,12 @@ def compute_all(y_true, y_prob, threshold: float = 0.5, patient_hours: float | N
     results["tp"], results["fp"], results["fn"], results["tn"] = tp, fp, fn, tn
     results["precision"] = float(tp) / (tp + fp) if (tp + fp) > 0 else float("nan")
     results["recall"] = float(tp) / (tp + fn) if (tp + fn) > 0 else float("nan")
-    results["f1"] = 2 * tp / max(1, 2 * tp + fp + fn)  # max(1,...) avoids div-by-zero; returns 0 when no predictions
+    _prec = results["precision"]
+    _rec = results["recall"]
+    if (isinstance(_prec, float) and math.isnan(_prec)) or (isinstance(_rec, float) and math.isnan(_rec)) or (_prec + _rec) == 0:
+        results["f1"] = float("nan")
+    else:
+        results["f1"] = 2 * _prec * _rec / (_prec + _rec)
     results["sensitivity"] = results["recall"]
     results["specificity"] = float(tn) / (tn + fp) if (tn + fp) > 0 else float("nan")
     return results

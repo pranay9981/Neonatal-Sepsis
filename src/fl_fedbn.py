@@ -36,8 +36,13 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
     Each client keeps its own BN statistics; only non-BN params are averaged.
     """
 
-    BN_KEYWORDS = ("running_mean", "running_var", "num_batches_tracked",
-                   "batchnorm", "batch_norm", "layer_norm", "layernorm")
+    # C-06: Extended to include LayerNorm variants so FedBN correctly excludes
+    # them from aggregation instead of silently behaving like FedAvg.
+    BN_KEYWORDS = (
+        "bn.", "batch_norm", "batchnorm", "BatchNorm",
+        "layer_norm", "layernorm", "LayerNorm", ".norm.",
+        "running_mean", "running_var", "num_batches_tracked",
+    )
 
     def __init__(self, model_name: str, n_features: int, seq_len: int,
                  save_dir: str, checkpoints_dir: str,
@@ -55,7 +60,10 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
         os.makedirs(checkpoints_dir, exist_ok=True)
 
     def _is_bn_key(self, key: str) -> bool:
-        return any(kw in key.lower() for kw in self.BN_KEYWORDS)
+        # Check both the original key and its lowercase form so that mixed-case
+        # keywords like "BatchNorm" / "LayerNorm" are matched correctly.
+        key_lower = key.lower()
+        return any(kw in key or kw.lower() in key_lower for kw in self.BN_KEYWORDS)
 
     def aggregate_fit(self, server_round: int, results, failures):
         if not results:
@@ -90,27 +98,44 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
                     client_idx, len(w), len(keys),
                 )
                 return super().aggregate_fit(server_round, results, failures)
-        agg_arrays = []
-        first_client_arrays = weights_results[0][0]
+        # C-07: FedBN protocol — aggregate ONLY non-norm parameters; norm params
+        # are kept local by each client and must NOT be part of the parameters
+        # sent back.  The old code sent client-0's norm arrays to all clients,
+        # violating FedBN and making it equivalent to FedAvg for norm layers.
+        #
+        # Strategy: build a full state-dict for checkpointing (using ref_model's
+        # norm values as placeholder), but send back ONLY the aggregated non-norm
+        # arrays.  Clients will re-apply their own norm params after loading.
+        agg_non_bn: Dict[str, np.ndarray] = {}   # key -> aggregated array (non-norm)
+        ref_sd = ref_model.state_dict()
+
         for i, key in enumerate(keys):
             if self._is_bn_key(key):
-                if i < len(first_client_arrays):
-                    agg_arrays.append(first_client_arrays[i])
-                else:
-                    agg_arrays.append(ref_model.state_dict()[key].cpu().numpy())
+                # Skip: each client keeps its own norm params unchanged.
+                pass
             else:
-                weighted = np.zeros_like(weights_results[0][0][i])
+                weighted = np.zeros_like(weights_results[0][0][i], dtype=np.float64)
                 for w, n in weights_results:
-                    weighted += w[i] * (n / total_examples)
-                agg_arrays.append(weighted)
+                    weighted += w[i].astype(np.float64) * (n / total_examples)
+                agg_non_bn[key] = weighted.astype(weights_results[0][0][i].dtype)
 
-        aggregated_params = ndarrays_to_parameters(agg_arrays)
+        # Build ordered list for sending (non-norm keys only, in state-dict order)
+        non_bn_keys_ordered = [k for k in keys if not self._is_bn_key(k)]
+        send_arrays = [agg_non_bn[k] for k in non_bn_keys_ordered]
 
-        # Save round checkpoint
+        aggregated_params = ndarrays_to_parameters(send_arrays)
+
+        # Save round checkpoint: full state-dict using ref-model's norm params as
+        # placeholder (norm params are client-local so any fixed value is valid here).
         try:
-            sd = arrays_to_state_dict_by_order(ref_model, agg_arrays)
+            full_sd = {k: torch.tensor(agg_non_bn[k]) if k in agg_non_bn else ref_sd[k].cpu()
+                       for k in keys}
             ckpt = os.path.join(self.checkpoints_dir, f"global_round_{server_round}.pt")
-            torch.save(sd, ckpt)
+            # W-10: Atomic write — avoids partial checkpoint on crash.
+            import tempfile as _tempfile
+            tmp_ckpt = ckpt + ".tmp"
+            torch.save(full_sd, tmp_ckpt)
+            os.replace(tmp_ckpt, ckpt)
             logger.info("FedBN: saved round %d checkpoint", server_round)
         except Exception as e:
             logger.warning("FedBN: could not save checkpoint: %s", e)

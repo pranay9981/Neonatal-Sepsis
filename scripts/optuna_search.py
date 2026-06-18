@@ -37,7 +37,7 @@ from model_grud import GRUD
 from train_local import (
     seed_everything, stratified_train_val_split, collate_grud,
     get_num_workers, make_warmup_cosine_scheduler, safe_metrics,
-    FocalLoss, _load_grud_empirical_mean,
+    FocalLoss,
 )
 from logging_config import get_logger
 
@@ -83,9 +83,22 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str,
     model = _build_model(trial, model_name, n_features, seq_len).to(device)
 
     if model_name == "grud":
-        xm = _load_grud_empirical_mean(index_path, model.n_features)
-        if xm is not None:
-            model.set_empirical_mean(xm)
+        # C-22: compute x_mean from NORMALISED training samples, not raw features.
+        # PatientDataset applies the scaler in __getitem__, so iterating train_ds
+        # yields z-scored tensors.  Using these avoids the double-normalisation bug
+        # where _load_grud_empirical_mean returned raw means that the dataset would
+        # normalise again during training.
+        _x_sum = torch.zeros(model.n_features)
+        _x_cnt = torch.zeros(model.n_features)
+        for _i in range(len(train_ds)):
+            _sample = train_ds[_i]
+            # GRU-D mode yields (X, mask, delta, actual_len, y) or (X, mask, delta, y).
+            _Xb = _sample[0]
+            _Mb = _sample[1]
+            _x_sum += (_Mb * _Xb).sum(dim=0)
+            _x_cnt += _Mb.sum(dim=0)
+        xm = _x_sum / _x_cnt.clamp(min=1.0)
+        model.set_empirical_mean(xm)
 
     pos = sum(all_labels)
     neg = len(all_labels) - pos
@@ -144,9 +157,14 @@ def run_optuna(
     if not _OPTUNA_OK:
         print("optuna not installed. Run: pip install optuna"); return
 
+    # I-18: use SQLite storage so trials survive interruptions and can be resumed.
+    # load_if_exists=True means re-running with the same study_name resumes from
+    # where it left off rather than overwriting previous trials.
     study = optuna.create_study(
+        storage="sqlite:///optuna_study.db",
         study_name=study_name,
         direction="maximize",
+        load_if_exists=True,
         sampler=TPESampler(seed=42),
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=3),
     )

@@ -315,6 +315,10 @@ class ClinicalMetricsPage:
             return
 
         # Primary clinical metrics row
+        def fmt(v, decimals=3):
+            """Format a metric value, replacing NaN with 'N/A' (W-32, I-16)."""
+            return f"{v:.{decimals}f}" if isinstance(v, (int, float)) and not (isinstance(v, float) and np.isnan(v)) else "N/A"
+
         c1, c2, c3, c4 = st.columns(4)
         sens95, _ = sensitivity_at_specificity(y_true, y_prob, 0.95)
         spec90, _ = specificity_at_sensitivity(y_true, y_prob, 0.90)
@@ -322,19 +326,19 @@ class ClinicalMetricsPage:
         nna = metrics.get("nn_alert", float("nan"))
 
         c1.markdown(_metric_display(
-            f"{sens95:.3f}", "Sensitivity @ 95% Spec",
+            fmt(sens95), "Sensitivity @ 95% Spec",
             "Catch rate at low false-alarm setting", "#3B82F6",
         ), unsafe_allow_html=True)
         c2.markdown(_metric_display(
-            f"{spec90:.3f}", "Specificity @ 90% Sens",
+            fmt(spec90), "Specificity @ 90% Sens",
             "False-alarm rate at high-recall setting", "#10B981",
         ), unsafe_allow_html=True)
         c3.markdown(_metric_display(
-            f"{af:.2f}", "Alert Fatigue (FP/day)",
+            fmt(af, 2), "Alert Fatigue (FP/day)",
             "False alerts per day operational burden", "#F59E0B",
         ), unsafe_allow_html=True)
         c4.markdown(_metric_display(
-            f"{nna:.1f}", "NNAlert",
+            fmt(nna, 1), "NNAlert",
             "Investigations per confirmed case", "#8B5CF6",
         ), unsafe_allow_html=True)
 
@@ -343,11 +347,11 @@ class ClinicalMetricsPage:
         # Threshold-dependent metrics
         st.markdown(f"**At threshold = {threshold:.2f}:**")
         c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Precision", f"{metrics.get('precision', float('nan')):.3f}",
+        c5.metric("Precision", fmt(metrics.get('precision', float('nan'))),
                   help="Of all patients flagged, what fraction truly have sepsis?")
-        c6.metric("Recall", f"{metrics.get('recall', float('nan')):.3f}",
+        c6.metric("Recall", fmt(metrics.get('recall', float('nan'))),
                   help="Of all true sepsis patients, what fraction were flagged?")
-        c7.metric("F1-Score", f"{metrics.get('f1', float('nan')):.3f}",
+        c7.metric("F1-Score", fmt(metrics.get('f1', float('nan'))),
                   help="Harmonic mean of precision and recall")
         tn = metrics.get("tn", 0)
         fp = metrics.get("fp", 0)
