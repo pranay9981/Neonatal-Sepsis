@@ -1,6 +1,5 @@
 # src/utils.py
 import os
-import logging
 
 
 def ensure_dir(path):

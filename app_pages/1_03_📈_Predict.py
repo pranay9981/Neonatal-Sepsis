@@ -121,7 +121,7 @@ def load_model(model_path: str, model_type: str, n_features: int = N_FEATURES, s
             if TimeSeriesTransformer is None:
                 return None, "Could not import TimeSeriesTransformer"
             m = TimeSeriesTransformer(n_features=n_features, seq_len=seq_len)
-        state = torch.load(str(p), map_location="cpu", weights_only=False)
+        state = torch.load(str(p), map_location="cpu", weights_only=True)
         if isinstance(state, dict) and "model_state" in state:
             state = state["model_state"]
         m.load_state_dict(state)
@@ -271,6 +271,8 @@ def _model_forward(model, x):
 
 
 def compute_feature_importance(model, tensor: torch.Tensor, scaler=None) -> Optional[np.ndarray]:
+    # NOTE: gradients are computed w.r.t. the observation channel (x) only.
+    # For GRU-D, mask and delta contributions are not captured — treat as approximate.
     try:
         x = tensor.clone().float().requires_grad_(True)
         model.eval()

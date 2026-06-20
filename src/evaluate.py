@@ -71,20 +71,23 @@ def try_ordered_map(model, arrays):
     """
     sd = model.state_dict()
     keys = list(sd.keys())
-    map_len = min(len(keys), len(arrays))
+    if len(arrays) < len(keys):
+        raise RuntimeError(
+            f"try_ordered_map: NPZ has {len(arrays)} arrays but model has {len(keys)} keys; "
+            f"refusing to evaluate with {len(keys) - len(arrays)} randomly-initialised layers."
+        )
+    map_len = len(keys)
     new_sd = {}
     for k, arr in zip(keys[:map_len], arrays[:map_len]):
         t = torch.tensor(arr)
         target = sd[k]
         if t.shape != target.shape:
-            # If number of elements match, reshape
             if t.numel() == target.numel():
                 try:
                     t = t.view(target.shape)
                 except Exception:
                     raise RuntimeError(f"reshape failed for key {k}: {t.shape} -> {target.shape}")
             else:
-                # shapes mismatch and number elements differ; raise to let caller try other strategies
                 raise RuntimeError(f"shape mismatch for key {k}: array {t.shape} vs target {tuple(target.shape)}")
         new_sd[k] = t
     sd.update(new_sd)
@@ -113,13 +116,13 @@ def resample_1d_along_axis(src, target_len):
 
 def try_smart_map(model, arrays, files):
     """
-    Try to map arrays -> model.state_dict by heuristics:
-      - If ordered mapping failed, attempt best-effort mapping:
-        - If an array can be reshaped to a key (matching element count), use it.
-        - If a key is a positional embedding-like tensor (first dim mismatch),
-          attempt to resample along first dimension.
-    Returns state_dict on success or raises.
+    Heuristic fallback mapping for NPZ checkpoints whose array order/shape differs
+    from the current model. Reached only when try_ordered_map fails (abnormal path).
     """
+    logger.warning(
+        "try_smart_map invoked — NPZ array order/shape does not match model; "
+        "attempting heuristic remapping. Verify checkpoint source."
+    )
     sd = model.state_dict()
     keys = list(sd.keys())
 
@@ -166,40 +169,18 @@ def try_smart_map(model, arrays, files):
                 # cannot reshape, continue
                 pass
 
-    # Third pass: positional embedding style handling (first-dim mismatch)
-    # Only applied to keys that look like positional embeddings to avoid shape collisions.
-    for k in keys:
-        if k in new_sd:
-            continue
-        if not any(kw in k.lower() for kw in ("pos", "embed", "position")):
-            continue
-        tgt = sd[k]
-        tgt_shape = tuple(tgt.shape)
-        # consider only if target has first dim > 1
-        if len(tgt_shape) >= 1:
-            tgt_len = tgt_shape[0]
-            # find an unused array with same trailing dims
-            for m in arr_meta:
-                if m["idx"] in used:
-                    continue
-                arr = arrays[m["idx"]]
-                # check if trailing dims match
-                if arr.ndim >= 1 and arr.shape[1:] == tgt_shape[1:]:
-                    # try resampling along axis 0
-                    try:
-                        res = resample_1d_along_axis(arr, tgt_len)
-                        t = torch.tensor(res).view(tgt_shape)
-                        new_sd[k] = t
-                        used.add(m["idx"])
-                        break
-                    except Exception:
-                        continue
-
-    # Final: if new_sd empty or very small, raise
+    # Final: if new_sd empty, raise immediately
     if len(new_sd) == 0:
         raise RuntimeError("smart mapping produced no matches")
 
-    # Fill any remaining keys with existing sd (so load_state_dict won't fail for missing keys)
+    # Verify full coverage — partial match with random remaining keys is clinically dangerous
+    unmapped = [k for k in keys if k not in new_sd]
+    if unmapped:
+        raise RuntimeError(
+            f"try_smart_map: {len(unmapped)}/{len(keys)} keys unmatched "
+            f"(first 5: {unmapped[:5]}). Refusing to evaluate with partial random weights."
+        )
+
     final_sd = sd.copy()
     final_sd.update(new_sd)
     return final_sd

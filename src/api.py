@@ -104,15 +104,7 @@ def _load_artifacts():
                 f"Model checksum mismatch! Expected {expected_sha}, got {actual}"
             )
 
-    try:
-        raw = torch.load(str(p), map_location="cpu", weights_only=True)
-    except Exception:
-        _logger.warning(
-            "torch.load with weights_only=True failed for %s; falling back to "
-            "weights_only=False — ensure checkpoint source is trusted.",
-            p,
-        )
-        raw = torch.load(str(p), map_location="cpu", weights_only=False)
+    raw = torch.load(str(p), map_location="cpu", weights_only=True)
     if isinstance(raw, dict) and "model_state" in raw:
         raw = raw["model_state"]
     if MODEL_TYPE == "grud":
@@ -173,12 +165,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# W-21: CORS middleware
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("SEPSIS_CORS_ORIGINS", "http://localhost:8501").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 

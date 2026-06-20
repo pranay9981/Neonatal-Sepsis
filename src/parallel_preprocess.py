@@ -137,7 +137,7 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
     # NOTE: per-patient column mean is used here because population mean (from scaler.json)
     # is not yet available at preprocessing time. This is intentional — scaler.json is
     # produced by recompute_scaler_from_index() after create_splits.py.
-    logger.warning(
+    logger.debug(
         "Patient %s: imputing missing values with per-patient mean; "
         "population mean from scaler.json is applied at training time via dataset.py.",
         os.path.splitext(os.path.basename(fp))[0],

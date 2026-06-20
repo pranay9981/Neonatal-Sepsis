@@ -220,7 +220,7 @@ class TrainingRunsPage:
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="#141827",
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
 
             with st.expander("Raw metrics CSV"):
                 st.dataframe(mdf, use_container_width=True)

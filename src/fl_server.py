@@ -303,7 +303,8 @@ def build_initial_parameters_from_model(model_name: str, n_features: int, seq_le
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=10)
-    ap.add_argument("--host", type=str, default="0.0.0.0")
+    ap.add_argument("--host", type=str, default="127.0.0.1",
+                    help="Bind address (127.0.0.1 for local sim; 0.0.0.0 for Docker multi-host)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--min_clients", type=int, default=1, help="min available clients to begin")
     ap.add_argument("--model", choices=["transformer", "grud"], default="transformer")

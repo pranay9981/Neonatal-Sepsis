@@ -496,6 +496,9 @@ def train(
         logger.warning("model_best.pt not found; using in-memory logits for calibration.")
 
     # Step 2: fit TemperatureScaler on best-checkpoint logits (W-03 / C-03).
+    # NOTE: threshold is calibrated on the same val set used for checkpoint selection.
+    # This introduces optimistic bias in val-threshold metrics (F1, sensitivity).
+    # Always validate the threshold on the frozen test set before clinical deployment.
     if use_temperature_scaling and len(cal_logits) >= 2 and len(np.unique(cal_y)) >= 2:
         temp_scaler = TemperatureScaler()
         temp_scaler.fit(np.array(cal_logits), np.array(cal_y))

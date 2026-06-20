@@ -120,7 +120,10 @@ def objective(trial, index_path: str, model_name: str, epochs: int, device: str,
                 Xb, Mb, Db, yb = batch
                 logits = model(Xb.to(device), Mb.to(device), Db.to(device))
             loss = loss_fn(logits, yb.to(device))
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            opt.step()
         scheduler.step()
 
         model.eval()

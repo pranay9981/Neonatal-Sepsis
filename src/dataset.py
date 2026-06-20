@@ -7,6 +7,15 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+
+def _pid_alive(pid: int) -> bool:
+    """Return True if the given PID is still running on this machine."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
 try:
     import lmdb
 except ImportError:
@@ -71,6 +80,18 @@ class PatientDataset(Dataset):
     def _load_pt(self, path):
         return torch.load(path, weights_only=True)
 
+    @classmethod
+    def _cleanup_stale_envs(cls):
+        """Close and remove LMDB env entries for PIDs that no longer exist."""
+        import os as _os
+        stale = [key for key in list(cls._lmdb_envs) if not _pid_alive(key[0])]
+        for key in stale:
+            try:
+                cls._lmdb_envs[key].close()
+            except Exception:
+                pass
+            del cls._lmdb_envs[key]
+
     def _get_lmdb_env(self, lmdb_path: str):
         """Return a cached lmdb.Environment for lmdb_path, one per process.
 
@@ -81,6 +102,7 @@ class PatientDataset(Dataset):
         pid = _os.getpid()
         key = (pid, lmdb_path)
         if key not in self.__class__._lmdb_envs:
+            self.__class__._cleanup_stale_envs()
             self.__class__._lmdb_envs[key] = lmdb.open(
                 lmdb_path, readonly=True, lock=False, readahead=False
             )
