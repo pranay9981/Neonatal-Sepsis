@@ -230,18 +230,17 @@ def npz_to_pt_and_state_dict(npz_path: str, model):
 # -------------------------
 # Evaluate helper
 # -------------------------
-def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_features=None, seq_len=None, out_file=None, scaler_path=None):
+def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_features=None, seq_len=None, out_file=None, scaler_path=None, suppress_test_check=False):
     """
     Evaluate one checkpoint (pt or npz). If npz, attempt conversion->pt (and save .pt).
     Returns dict { 'ckpt': path, 'auroc': val, 'auprc': val, 'n_samples': n } or raises.
     """
     ckpt_path = str(ckpt_path)
     
-    # --- START OF MODIFICATION ---
-    # We must determine n_features and seq_len for the model
+    # Determine n_features and seq_len for the model
     # If not provided, infer them from the dataset *before* loading the model
     
-    if "test" not in Path(index_path).stem.lower():
+    if not suppress_test_check and "test" not in Path(index_path).stem.lower():
         logger.warning(
             "Index file '%s' may not be the held-out test split — pass test_index.pt to avoid optimistic bias.",
             index_path,
@@ -264,8 +263,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
         except Exception:
             if n_features is None or seq_len is None:
                 raise ValueError("Could not infer n_features/seq_len. Please provide --n_features and --seq_len arguments.")
-    # --- END OF MODIFICATION ---
-    
+
     model = build_model_for_eval(model_name, n_features=n_features, seq_len=seq_len)
 
     # load checkpoint - accept .pt or .npz
@@ -318,7 +316,7 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
                 pad_mask_b = pad_mask_b.to(device)
                 logits = model(Xb, src_key_padding_mask=pad_mask_b)
             else:
-                Xb, Mb, Db, yb = batch
+                Xb, Mb, Db, _al, yb = batch
                 Xb, Mb, Db = Xb.to(device).float(), Mb.to(device).float(), Db.to(device).float()
                 logits = model(Xb, Mb, Db)
 
@@ -343,8 +341,6 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
 
     logger.info("%s -> samples=%d  AUROC=%s  AUPRC=%s", os.path.basename(ckpt_path), len(ys), auc, ap)
     
-    # --- START OF MODIFICATION ---
-    # Create results dictionary and save to JSON if out_file is provided
     results_dict = {
         "ckpt": ckpt_path,
         "model_name": Path(ckpt_path).stem,
@@ -364,7 +360,6 @@ def evaluate_single_ckpt(index_path, ckpt_path, model_name, device="cpu", n_feat
             logger.warning("Failed to save results to %s: %s", out_file, e)
             
     return results_dict
-    # --- END OF MODIFICATION ---
 
 # -------------------------
 # Main entrypoint

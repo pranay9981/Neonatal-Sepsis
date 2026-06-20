@@ -196,8 +196,8 @@ def process_file(fp, out_folder, seq_len=48, freq='h'):
                 except Exception as _e:
                     patient_id_tmp = os.path.splitext(os.path.basename(fp))[0]
                     logger.warning(
-                        "Patient %s: y_seq extraction failed (%s), defaulting y=1",
-                        patient_id_tmp, _e,
+                        "Patient %s: y_seq extraction failed (%s); patient-level label y=%d unchanged",
+                        patient_id_tmp, _e, y,
                     )
                     y_seq_raw = None
                 break

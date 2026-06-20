@@ -23,12 +23,18 @@ SRC_DIR = PROJECT_ROOT / "src"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
 
+_STEP_TIMEOUT = int(os.environ.get("PIPELINE_STEP_TIMEOUT", "3600"))
+
+
 def _run(cmd, desc, env):
     print(f"\n{'=' * 60}")
     print(f"[PIPELINE] {desc}")
     print(f"[CMD] {' '.join(str(c) for c in cmd)}")
     print("=" * 60)
-    result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT))
+    try:
+        result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), timeout=_STEP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"[PIPELINE] Step '{desc}' timed out after {_STEP_TIMEOUT}s.")
     if result.returncode != 0:
         print(f"\n[PIPELINE] ERROR: '{desc}' failed (rc={result.returncode}). Stopping.")
         sys.exit(result.returncode)

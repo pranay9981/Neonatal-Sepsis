@@ -9,7 +9,8 @@ _logger = logging.getLogger(__name__)
 
 def _sinusoidal_pos_enc(seq_len: int, d_model: int) -> torch.Tensor:
     """Return (1, seq_len, d_model) sinusoidal positional encoding."""
-    assert d_model % 2 == 0, f"d_model must be even for sinusoidal encoding, got {d_model}"
+    if d_model % 2 != 0:
+        raise ValueError(f"d_model must be even for sinusoidal encoding, got {d_model}")
     pe = torch.zeros(seq_len, d_model)
     pos = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
     div = torch.exp(

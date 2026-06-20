@@ -25,13 +25,6 @@ from tqdm import tqdm
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
-def _compute_deltas(mask_arr: np.ndarray) -> np.ndarray:
-    T, F = mask_arr.shape
-    delta = np.zeros((T, F), dtype=np.float32)
-    for t in range(1, T):
-        delta[t] = (delta[t - 1] + 1.0) * (1.0 - mask_arr[t])
-    return delta
-
 
 def _compute_window_deltas(mask_win: np.ndarray) -> np.ndarray:
     """Compute GRU-D deltas relative to the window start.
@@ -100,7 +93,7 @@ def create_windowed_dataset(
             delta_full = data["deltas"].numpy().astype(np.float32)
         else:
             mask_full = (~np.isnan(X)).astype(np.float32)
-            delta_full = _compute_deltas(mask_full)
+            delta_full = _compute_window_deltas(mask_full)
 
         T, F = X.shape
         patient_id = str(data.get("meta", {}).get("patient_id", Path(pt_path).stem))

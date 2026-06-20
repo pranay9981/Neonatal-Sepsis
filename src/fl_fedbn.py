@@ -47,6 +47,8 @@ class FedBNStrategy(fl.server.strategy.FedAvg):
     def __init__(self, model_name: str, n_features: int, seq_len: int,
                  save_dir: str, checkpoints_dir: str,
                  best_name: str = "global_best.pt", *args, **kwargs):
+        from fl_server import weighted_average
+        kwargs.setdefault("evaluate_metrics_aggregation_fn", weighted_average)
         super().__init__(*args, **kwargs)
         self.model_name = model_name
         self.n_features = n_features

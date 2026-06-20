@@ -11,7 +11,6 @@ services:
       - ./server_out:/app/server_out
       - ./server_out_fedbn:/app/server_out_fedbn
       - ./runs:/app/runs
-      - .:/app/host_data:ro
     environment:
       - SEPSIS_MODEL_PATH=/app/server_out/global_best.pt
       - SEPSIS_MODEL_TYPE=grud

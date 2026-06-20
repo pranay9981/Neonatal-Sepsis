@@ -99,6 +99,9 @@ def _load_state(model: nn.Module, ckpt_path: str):
     except Exception:
         result = model.load_state_dict(sd, strict=False)
         if result.missing_keys:
-            _log.warning("Ensemble load missing keys: %s", result.missing_keys)
+            raise RuntimeError(
+                f"Cannot load ensemble member {ckpt_path}: missing keys {result.missing_keys}. "
+                "Model architecture may not match checkpoint."
+            )
         if result.unexpected_keys:
             _log.warning("Ensemble load unexpected keys: %s", result.unexpected_keys)

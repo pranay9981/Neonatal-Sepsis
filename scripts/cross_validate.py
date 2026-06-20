@@ -182,6 +182,7 @@ def run_cv(
                 ckpt_path=str(best_ckpt),
                 model_name=model_name,
                 scaler_path=fold_scaler_path,
+                suppress_test_check=True,
             )
             auroc = result.get("auroc") or 0.0
             auprc = result.get("auprc") or 0.0

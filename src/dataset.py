@@ -95,7 +95,9 @@ class PatientDataset(Dataset):
             raw = txn.get(key.encode("utf-8"))
         if raw is None:
             raise KeyError(f"Key {key!r} not found in LMDB at {path}")
-        return pickle.loads(raw)
+        # SECURITY: pickle.loads executes arbitrary code if the LMDB file is tampered with.
+        # Only use LMDB shards produced by this project's preprocessing pipeline.
+        return pickle.loads(raw)  # nosec: trusted internal data only
 
     def _apply_scaler(self, X: torch.Tensor) -> torch.Tensor:
         if self._mean is None:

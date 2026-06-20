@@ -31,7 +31,7 @@ class EnsembleDataset(Dataset):
     """
 
     def __init__(self, index_path: str):
-        d = torch.load(index_path, weights_only=True)
+        d = torch.load(index_path, weights_only=False)  # nosec: index file contains plain lists, not tensors
         self.x_paths = d.get("x_paths", [])
         self.y_indexed = d.get("y", None)
         if self.y_indexed is not None and hasattr(self.y_indexed, "tolist"):

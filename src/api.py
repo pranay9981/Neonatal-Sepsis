@@ -64,7 +64,7 @@ METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
 _raw_audit_log = os.environ.get("SEPSIS_AUDIT_LOG", str(Path(__file__).parent.parent / "predictions.jsonl"))
 _audit_path = Path(_raw_audit_log).resolve()
 _allowed_base = Path(".").resolve()
-if not str(_audit_path).startswith(str(_allowed_base)):
+if not _audit_path.is_relative_to(_allowed_base):
     raise ValueError(f"AUDIT_LOG path traversal blocked: {_audit_path}")
 AUDIT_LOG = str(_audit_path)
 MAX_ROWS = 1000
@@ -187,14 +187,6 @@ app.add_middleware(
 async def global_exc_handler(request, exc):
     _logger.error("Unhandled exception", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-
-
-# W-22: startup check — fail fast if model file is absent
-@app.on_event("startup")
-async def check_model_exists():
-    model_path = os.getenv("SEPSIS_MODEL_PATH", "server_out/global_best.pt")
-    if not Path(model_path).exists():
-        raise RuntimeError(f"Model not found at startup: {model_path}")
 
 
 class PredictRequest(BaseModel):

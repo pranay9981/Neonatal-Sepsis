@@ -247,7 +247,7 @@ class FlowerClient(fl.client.NumPyClient):
         use_grud = self.model_name == "grud"
 
         def _collate_grud(batch):
-            Xs, masks, deltas, ys = zip(*batch)
+            Xs, masks, deltas, actual_lens, ys = zip(*batch)
             return torch.stack(Xs), torch.stack(masks), torch.stack(deltas), torch.stack(ys)
 
         collate = _collate_grud if use_grud else None
